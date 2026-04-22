@@ -290,9 +290,13 @@ function ruleChainAnswer(raw) {
 function extractRuleInputNumber(text) {
   const patterns = [
     /input number\s+(-?\d+(?:\.\d+)?)/i,
+    /input number\s*:\s*(-?\d+(?:\.\d+)?)/i,
+    /given input\s+(-?\d+(?:\.\d+)?)/i,
+    /given input number\s+(-?\d+(?:\.\d+)?)/i,
     /input value\s+(-?\d+(?:\.\d+)?)/i,
     /starting number\s+(-?\d+(?:\.\d+)?)/i,
     /initial number\s+(-?\d+(?:\.\d+)?)/i,
+    /input\s*:\s*(-?\d+(?:\.\d+)?)/i,
     /input\s+(-?\d+(?:\.\d+)?)/i
   ];
 
@@ -306,7 +310,7 @@ function extractRuleInputNumber(text) {
 
 function evaluateRuleBlock(block, current) {
   const text = String(block || '');
-  const ifPairs = [...text.matchAll(/if\s+(.+?)(?:\s*->\s*|\s+then\s+)(.+?)(?=(?:\s+if\s+|\s+otherwise\b|$))/gi)];
+  const ifPairs = [...text.matchAll(/(?:if|when)\s+(.+?)(?:\s*(?:->|=>|:)\s*|\s+then\s+)(.+?)(?=(?:\s*(?:if|when|otherwise|else)\b|$))/gi)];
 
   for (const pair of ifPairs) {
     if (evaluateRuleCondition(pair[1], current)) {
@@ -314,7 +318,7 @@ function evaluateRuleBlock(block, current) {
     }
   }
 
-  const otherwiseMatch = text.match(/otherwise(?:\s*->\s*|\s+then\s+)(.+)$/i);
+  const otherwiseMatch = text.match(/(?:otherwise|else)(?:\s*(?:->|=>|:)\s*|\s+then\s+)(.+)$/i);
   if (otherwiseMatch) {
     return applyRuleAction(otherwiseMatch[1], current);
   }
