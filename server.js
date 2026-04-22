@@ -181,6 +181,9 @@ function deterministicAnswer(query) {
   const raw = String(query || '').trim();
   const q = raw.toLowerCase();
 
+  const filteredNumberAnswer = answerFilteredNumbers(raw);
+  if (filteredNumberAnswer !== null) return filteredNumberAnswer;
+
   const oddEvenAnswer = answerOddEven(q);
   if (oddEvenAnswer) return oddEvenAnswer;
 
@@ -274,6 +277,47 @@ function deterministicAnswer(query) {
   if (decimalToBinaryMatch && /\bbinary\b/.test(q)) return Number(decimalToBinaryMatch[1] || decimalToBinaryMatch[2]).toString(2);
 
   return null;
+}
+
+function answerFilteredNumbers(raw) {
+  const q = String(raw || '').toLowerCase();
+  if (!/\b(sum|total|add|count|average|mean|product)\b/.test(q)) return null;
+  if (!/\b(even|odd|positive|negative|prime|numbers?)\b/.test(q)) return null;
+
+  const nums = extractNumbers(raw);
+  if (nums.length === 0) return null;
+
+  let selected = nums;
+  if (/\beven\b/.test(q)) selected = selected.filter(n => Number.isInteger(n) && Math.abs(n) % 2 === 0);
+  if (/\bodd\b/.test(q)) selected = selected.filter(n => Number.isInteger(n) && Math.abs(n) % 2 === 1);
+  if (/\bpositive\b/.test(q)) selected = selected.filter(n => n > 0);
+  if (/\bnegative\b/.test(q)) selected = selected.filter(n => n < 0);
+  if (/\bprime\b/.test(q)) selected = selected.filter(n => isPrime(Math.abs(n)));
+
+  if (/\bcount\b|\bhow many\b/.test(q)) return String(selected.length);
+  if (/\baverage\b|\bmean\b/.test(q)) {
+    if (selected.length === 0) return '0';
+    return formatNumber(selected.reduce((a, b) => a + b, 0) / selected.length);
+  }
+  if (/\bproduct\b|\bmultiply\b/.test(q)) {
+    if (selected.length === 0) return '0';
+    return formatNumber(selected.reduce((a, b) => a * b, 1));
+  }
+  if (/\bsum\b|\btotal\b|\badd\b/.test(q)) {
+    return formatNumber(selected.reduce((a, b) => a + b, 0));
+  }
+
+  return null;
+}
+
+function extractNumbers(raw) {
+  const explicit = String(raw || '').match(/-?\d+(?:\.\d+)?/g);
+  if (explicit?.length) return explicit.map(Number);
+
+  const words = String(raw || '').toLowerCase().match(/\b(?:minus |negative )?(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and|-|\s)+\b/g) || [];
+  return words
+    .map(segment => parseNumberWords(segment))
+    .filter(value => value !== null);
 }
 
 function answerOddEven(q) {
