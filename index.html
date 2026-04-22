@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>My API Tester</title></head>
+<body>
+  <h1>Test My API</h1>
+  <input id="query" placeholder="Ask something..." style="width:300px"/>
+  <button onclick="askAPI()">Ask</button>
+  <p id="result"></p>
+
+  <script>
+    async function askAPI() {
+      const query = document.getElementById("query").value;
+      const res = await fetch("/v1/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query })
+      });
+      const data = await res.json();
+      document.getElementById("result").innerText = data.output;
+    }
+  </script>
+</body>
+</html>
