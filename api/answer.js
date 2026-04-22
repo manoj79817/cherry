@@ -312,7 +312,7 @@ function evaluateLevel7(raw) {
   }
   const looksLikeRules =
     /\b(?:rule|step)\s*\d+\s*:/.test(lower) ||
-    (/\bif\b/.test(lower) && (/\bthen\b/.test(lower) || /->|=>|:|,|\?/.test(text)));
+    (/\bif\b/.test(lower) && /\b(?:double|triple|half|halve|add|subtract|increase|decrease|multiply|divide|output|return|otherwise|else|then|square|cube|odd|even|prime)\b/.test(lower));
 
   if (!looksLikeRules) return null;
 
@@ -343,6 +343,8 @@ function parseLevel7Input(text) {
     /(?:apply|use|follow|execute)\s+(?:the\s+)?rules?(?:\s+in\s+order)?\s+(?:to|on|for)\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
     /(?:input|starting|initial|given|start|begin)\s+with\s+(-?\d+(?:\.\d+)?)/i,
     /(?:input|starting|initial|given|start|begin)\s+with\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
+    /given\s+input\s+(-?\d+(?:\.\d+)?)/i,
+    /given\s+input\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
     /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s*:\s*(-?\d+(?:\.\d+)?)/i,
     /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s+(-?\d+(?:\.\d+)?)/i,
     /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s*:\s*([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
@@ -365,9 +367,7 @@ function parseLevel7Input(text) {
     const parsed = parseNumberWords(match[1]);
     if (parsed !== null) return parsed;
   }
-
-  const wordNumber = parseNumberWords(intro) ?? parseNumberWords(normalized);
-  return wordNumber !== null ? Number(wordNumber) : null;
+  return null;
 }
 
 function parseLevel7Sections(text) {
@@ -501,7 +501,7 @@ function parseLevel7Condition(condition, current) {
     if (divisor !== null) return divisor !== 0 && value % divisor === 0;
   }
 
-  const gtMatch = c.match(new RegExp(`(?:>|greater than|more than)\\s+${numberPattern}`));
+  const gtMatch = c.match(new RegExp(`(?:>|greater than|more than|above|over)\\s+${numberPattern}`));
   if (gtMatch) {
     const threshold = parseLevel7Number(gtMatch[1]);
     if (threshold !== null) return value > threshold;
@@ -513,7 +513,7 @@ function parseLevel7Condition(condition, current) {
     if (threshold !== null) return value >= threshold;
   }
 
-  const ltMatch = c.match(new RegExp(`(?:<|less than|fewer than)\\s+${numberPattern}`));
+  const ltMatch = c.match(new RegExp(`(?:<|less than|fewer than|below|under)\\s+${numberPattern}`));
   if (ltMatch) {
     const threshold = parseLevel7Number(ltMatch[1]);
     if (threshold !== null) return value < threshold;
