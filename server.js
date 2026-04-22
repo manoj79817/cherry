@@ -277,10 +277,10 @@ function deterministicAnswer(query) {
 }
 
 function answerOddEven(q) {
-  if (!/\b(odd|even|parity)\b/.test(q)) return null;
+  if (!/\b(odd|even|parity|divisible by 2|multiple of 2)\b/.test(q)) return null;
 
   const asksOdd = /\bodd\b/.test(q);
-  const asksEven = /\beven\b/.test(q);
+  const asksEven = /\beven\b|\bdivisible by 2\b|\bmultiple of 2\b/.test(q);
   const value = extractParityValue(q);
   if (value === null) return null;
 
@@ -291,42 +291,111 @@ function answerOddEven(q) {
 }
 
 function extractParityValue(q) {
-  const numberWords = {
-    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
-    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
-    seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20
-  };
-
   const expr = parseSimpleExpression(q);
   if (expr !== null) return expr;
 
-  const digitMatch = q.match(/-?\d+/);
-  if (digitMatch) return Number(digitMatch[0]);
+  const digitMatch = q.match(/(?:minus|negative)?\s*-?\d[\d,]*/);
+  if (digitMatch) {
+    const isNegative = /\b(minus|negative)\b/.test(digitMatch[0]);
+    const value = Number(digitMatch[0].replace(/\b(minus|negative)\b/g, '').replace(/,/g, '').trim());
+    return isNegative ? -Math.abs(value) : value;
+  }
 
-  const wordMatch = q.match(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b/);
-  if (wordMatch) return numberWords[wordMatch[1]];
+  const wordNumber = parseNumberWords(q);
+  if (wordNumber !== null) return wordNumber;
 
   return null;
 }
 
 function parseSimpleExpression(q) {
+  const normalized = normalizeNumberWordsForMath(q)
+    .replace(/,/g, '')
+    .replace(/\bplus\b|\badded to\b/g, '+')
+    .replace(/\bminus\b|\bsubtracted by\b/g, '-')
+    .replace(/\btimes\b|\bmultiplied by\b|\bmultiplied with\b/g, '*')
+    .replace(/\bdivided by\b/g, '/');
+
   const patterns = [
     { re: /sum of (-?\d+) and (-?\d+)/, fn: (a, b) => a + b },
     { re: /add (-?\d+) and (-?\d+)/, fn: (a, b) => a + b },
+    { re: /(-?\d+) plus (-?\d+)/, fn: (a, b) => a + b },
     { re: /(-?\d+)\s*\+\s*(-?\d+)/, fn: (a, b) => a + b },
     { re: /difference between (-?\d+) and (-?\d+)/, fn: (a, b) => a - b },
     { re: /(-?\d+)\s*-\s*(-?\d+)/, fn: (a, b) => a - b },
     { re: /product of (-?\d+) and (-?\d+)/, fn: (a, b) => a * b },
     { re: /multiply (-?\d+) and (-?\d+)/, fn: (a, b) => a * b },
-    { re: /(-?\d+)\s*(?:x|\*)\s*(-?\d+)/, fn: (a, b) => a * b }
+    { re: /(-?\d+)\s*(?:x|\*)\s*(-?\d+)/, fn: (a, b) => a * b },
+    { re: /(-?\d+)\s*\/\s*(-?\d+)/, fn: (a, b) => b === 0 ? null : a / b }
   ];
 
   for (const { re, fn } of patterns) {
-    const match = q.match(re);
-    if (match) return fn(Number(match[1]), Number(match[2]));
+    const match = normalized.match(re);
+    if (match) {
+      const value = fn(Number(match[1]), Number(match[2]));
+      return Number.isInteger(value) ? value : null;
+    }
+  }
+
+  const squareMatch = normalized.match(/(?:square of (-?\d+)|(-?\d+) squared)/);
+  if (squareMatch) {
+    const n = Number(squareMatch[1] || squareMatch[2]);
+    return n * n;
+  }
+
+  const cubeMatch = normalized.match(/(?:cube of (-?\d+)|(-?\d+) cubed)/);
+  if (cubeMatch) {
+    const n = Number(cubeMatch[1] || cubeMatch[2]);
+    return n * n * n;
   }
 
   return null;
+}
+
+function parseNumberWords(text) {
+  const normalized = text.toLowerCase().replace(/-/g, ' ').replace(/\band\b/g, ' ');
+  const units = {
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+    seventeen: 17, eighteen: 18, nineteen: 19
+  };
+  const tens = {
+    twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90
+  };
+  const tokens = normalized.match(/\b(minus|negative|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b/g);
+  if (!tokens) return null;
+
+  let total = 0;
+  let current = 0;
+  let sign = 1;
+  let sawNumber = false;
+
+  for (const token of tokens) {
+    if (token === 'minus' || token === 'negative') {
+      sign = -1;
+    } else if (token in units) {
+      current += units[token];
+      sawNumber = true;
+    } else if (token in tens) {
+      current += tens[token];
+      sawNumber = true;
+    } else if (token === 'hundred') {
+      current = (current || 1) * 100;
+      sawNumber = true;
+    } else if (token === 'thousand') {
+      total += (current || 1) * 1000;
+      current = 0;
+      sawNumber = true;
+    }
+  }
+
+  return sawNumber ? sign * (total + current) : null;
+}
+
+function normalizeNumberWordsForMath(text) {
+  return text.replace(/\b(?:minus |negative )?(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and|-|\s)+\b/gi, segment => {
+    const parsed = parseNumberWords(segment);
+    return parsed === null ? segment : String(parsed);
+  });
 }
 
 function extractDate(input) {
