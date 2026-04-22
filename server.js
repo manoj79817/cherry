@@ -377,12 +377,24 @@ function parseLevel7Input(text) {
 }
 
 function parseLevel7Sections(text) {
-  const markerSections = text.match(/(?:\b(?:rule|step)\s*\d+\s*(?:[:\-–—])\s*[\s\S]*?)(?=(?:\b(?:rule|step)\s*\d+\s*(?:[:\-–—]))|$)/gi);
-  if (markerSections && markerSections.length) {
-    return markerSections.map(section => section.replace(/^\b(?:rule|step)\s*\d+\s*(?:[:\-–—])\s*/i, '').trim()).filter(Boolean);
+  const normalized = String(text || '')
+    .replace(/[\u2192\u21D2]/g, '->')
+    .replace(/[â€“â€”]/g, '-');
+  const markerRegex = /\b(?:rule|step)\s*\d+\s*[:\-]\s*/gi;
+  const markers = [...normalized.matchAll(markerRegex)];
+
+  if (markers.length) {
+    const sections = [];
+    for (let i = 0; i < markers.length; i += 1) {
+      const start = markers[i].index + markers[i][0].length;
+      const end = i + 1 < markers.length ? markers[i + 1].index : normalized.length;
+      const chunk = normalized.slice(start, end).trim();
+      if (chunk) sections.push(chunk);
+    }
+    return sections;
   }
 
-  return text
+  return normalized
     .split(/(?:\r?\n|[.;]+)/)
     .map(part => part.trim())
     .filter(part => /\bif\b|\botherwise\b|\belse\b/i.test(part));
@@ -404,8 +416,9 @@ function parseLevel7Section(section, current) {
 
     const body = clause.replace(/^\s*(?:if|when)\b/i, '').trim();
     const split = splitLevel7ConditionAction(body);
+    const conditionResult = split ? parseLevel7Condition(split.condition, current) : null;
     if (!split) continue;
-    if (parseLevel7Condition(split.condition, current)) {
+    if (conditionResult) {
       return parseLevel7Action(split.action, current);
     }
   }
@@ -475,21 +488,37 @@ function findLevel7ActionStart(text) {
 function parseLevel7Condition(condition, current) {
   const c = String(condition || '').toLowerCase().replace(/[().,]/g, ' ');
   const value = Number(current);
+  const numberPattern = '(-?\\d+(?:\\.\\d+)?|[a-z-]+(?:\\s+[a-z-]+)*)';
 
-  const divMatch = c.match(/(?:divisible by|multiple of)\s+(-?\d+(?:\.\d+)?)/);
-  if (divMatch) return Number(divMatch[1]) !== 0 && value % Number(divMatch[1]) === 0;
+  const divMatch = c.match(new RegExp(`(?:divisible by|multiple of)\\s+${numberPattern}`));
+  if (divMatch) {
+    const divisor = parseLevel7Number(divMatch[1]);
+    if (divisor !== null) return divisor !== 0 && value % divisor === 0;
+  }
 
-  const gtMatch = c.match(/(?:>|greater than)\s*(-?\d+(?:\.\d+)?)/);
-  if (gtMatch) return value > Number(gtMatch[1]);
+  const gtMatch = c.match(new RegExp(`(?:>|greater than|more than)\\s+${numberPattern}`));
+  if (gtMatch) {
+    const threshold = parseLevel7Number(gtMatch[1]);
+    if (threshold !== null) return value > threshold;
+  }
 
-  const gteMatch = c.match(/(?:>=|at least|greater than or equal to)\s*(-?\d+(?:\.\d+)?)/);
-  if (gteMatch) return value >= Number(gteMatch[1]);
+  const gteMatch = c.match(new RegExp(`(?:>=|at least|greater than or equal to)\\s+${numberPattern}`));
+  if (gteMatch) {
+    const threshold = parseLevel7Number(gteMatch[1]);
+    if (threshold !== null) return value >= threshold;
+  }
 
-  const ltMatch = c.match(/(?:<|less than)\s*(-?\d+(?:\.\d+)?)/);
-  if (ltMatch) return value < Number(ltMatch[1]);
+  const ltMatch = c.match(new RegExp(`(?:<|less than|fewer than)\\s+${numberPattern}`));
+  if (ltMatch) {
+    const threshold = parseLevel7Number(ltMatch[1]);
+    if (threshold !== null) return value < threshold;
+  }
 
-  const lteMatch = c.match(/(?:<=|at most|less than or equal to)\s*(-?\d+(?:\.\d+)?)/);
-  if (lteMatch) return value <= Number(lteMatch[1]);
+  const lteMatch = c.match(new RegExp(`(?:<=|at most|less than or equal to)\\s+${numberPattern}`));
+  if (lteMatch) {
+    const threshold = parseLevel7Number(lteMatch[1]);
+    if (threshold !== null) return value <= threshold;
+  }
 
   if (/\beven\b/.test(c)) return Number.isInteger(value) && Math.abs(value) % 2 === 0;
   if (/\bodd\b/.test(c)) return Number.isInteger(value) && Math.abs(value) % 2 === 1;
@@ -532,23 +561,30 @@ function parseLevel7Action(action, current) {
   if (/\bsquare\b/.test(lower)) return { type: 'value', value: current * current };
   if (/\bcube\b/.test(lower)) return { type: 'value', value: current * current * current };
 
-  const addMatch = lower.match(/\badd\s+(-?\d+(?:\.\d+)?)|\bincrease by\s+(-?\d+(?:\.\d+)?)|\bplus\s+(-?\d+(?:\.\d+)?)/);
+  const numberPattern = '(-?\\d+(?:\\.\\d+)?|[a-z-]+(?:\\s+[a-z-]+)*)';
+  const addMatch = lower.match(new RegExp(`\\badd\\s+${numberPattern}|\\bincrease by\\s+${numberPattern}|\\bplus\\s+${numberPattern}`));
   if (addMatch) {
-    const n = Number(addMatch[1] || addMatch[2] || addMatch[3]);
-    return { type: 'value', value: current + n };
+    const n = parseLevel7Number(addMatch[1] || addMatch[2] || addMatch[3]);
+    if (n !== null) return { type: 'value', value: current + n };
   }
 
-  const subtractMatch = lower.match(/\bsubtract\s+(-?\d+(?:\.\d+)?)|\bdecrease by\s+(-?\d+(?:\.\d+)?)|\bminus\s+(-?\d+(?:\.\d+)?)/);
+  const subtractMatch = lower.match(new RegExp(`\\bsubtract\\s+${numberPattern}|\\bdecrease by\\s+${numberPattern}|\\bminus\\s+${numberPattern}`));
   if (subtractMatch) {
-    const n = Number(subtractMatch[1] || subtractMatch[2] || subtractMatch[3]);
-    return { type: 'value', value: current - n };
+    const n = parseLevel7Number(subtractMatch[1] || subtractMatch[2] || subtractMatch[3]);
+    if (n !== null) return { type: 'value', value: current - n };
   }
 
-  const multiplyMatch = lower.match(/\bmultiply by\s+(-?\d+(?:\.\d+)?)/);
-  if (multiplyMatch) return { type: 'value', value: current * Number(multiplyMatch[1]) };
+  const multiplyMatch = lower.match(new RegExp(`\\bmultiply by\\s+${numberPattern}`));
+  if (multiplyMatch) {
+    const n = parseLevel7Number(multiplyMatch[1]);
+    if (n !== null) return { type: 'value', value: current * n };
+  }
 
-  const divideMatch = lower.match(/\bdivide by\s+(-?\d+(?:\.\d+)?)/);
-  if (divideMatch) return { type: 'value', value: current / Number(divideMatch[1]) };
+  const divideMatch = lower.match(new RegExp(`\\bdivide by\\s+${numberPattern}`));
+  if (divideMatch) {
+    const n = parseLevel7Number(divideMatch[1]);
+    if (n !== null) return { type: 'value', value: current / n };
+  }
 
   const setMatch = lower.match(/\b(?:set|make|become|becomes|result is)\s+(-?\d+(?:\.\d+)?)/);
   if (setMatch) return { type: 'value', value: Number(setMatch[1]) };
@@ -628,21 +664,37 @@ function evaluateRuleBlock(block, current) {
 function evaluateRuleCondition(condition, current) {
   const c = String(condition || '').toLowerCase().replace(/[().,]/g, ' ');
   const value = Number(current);
+  const numberPattern = '(-?\\d+(?:\\.\\d+)?|[a-z-]+(?:\\s+[a-z-]+)*)';
 
-  const divMatch = c.match(/divisible by\s+(-?\d+(?:\.\d+)?)/);
-  if (divMatch) return Number(divMatch[1]) !== 0 && value % Number(divMatch[1]) === 0;
+  const divMatch = c.match(new RegExp(`divisible by\\s+${numberPattern}`));
+  if (divMatch) {
+    const divisor = parseLevel7Number(divMatch[1]);
+    if (divisor !== null) return divisor !== 0 && value % divisor === 0;
+  }
 
-  const gtMatch = c.match(/(?:>|greater than)\s*(-?\d+(?:\.\d+)?)/);
-  if (gtMatch) return value > Number(gtMatch[1]);
+  const gtMatch = c.match(new RegExp(`(?:>|greater than|more than)\\s+${numberPattern}`));
+  if (gtMatch) {
+    const threshold = parseLevel7Number(gtMatch[1]);
+    if (threshold !== null) return value > threshold;
+  }
 
-  const gteMatch = c.match(/(?:>=|at least|greater than or equal to)\s*(-?\d+(?:\.\d+)?)/);
-  if (gteMatch) return value >= Number(gteMatch[1]);
+  const gteMatch = c.match(new RegExp(`(?:>=|at least|greater than or equal to)\\s+${numberPattern}`));
+  if (gteMatch) {
+    const threshold = parseLevel7Number(gteMatch[1]);
+    if (threshold !== null) return value >= threshold;
+  }
 
-  const ltMatch = c.match(/(?:<|less than)\s*(-?\d+(?:\.\d+)?)/);
-  if (ltMatch) return value < Number(ltMatch[1]);
+  const ltMatch = c.match(new RegExp(`(?:<|less than|fewer than)\\s+${numberPattern}`));
+  if (ltMatch) {
+    const threshold = parseLevel7Number(ltMatch[1]);
+    if (threshold !== null) return value < threshold;
+  }
 
-  const lteMatch = c.match(/(?:<=|at most|less than or equal to)\s*(-?\d+(?:\.\d+)?)/);
-  if (lteMatch) return value <= Number(lteMatch[1]);
+  const lteMatch = c.match(new RegExp(`(?:<=|at most|less than or equal to)\\s+${numberPattern}`));
+  if (lteMatch) {
+    const threshold = parseLevel7Number(lteMatch[1]);
+    if (threshold !== null) return value <= threshold;
+  }
 
   if (/\beven\b/.test(c)) return Number.isInteger(value) && Math.abs(value) % 2 === 0;
   if (/\bodd\b/.test(c)) return Number.isInteger(value) && Math.abs(value) % 2 === 1;
@@ -683,25 +735,41 @@ function applyRuleAction(action, current) {
   if (/\bsquare\b/.test(lower)) return { type: 'value', value: current * current };
   if (/\bcube\b/.test(lower)) return { type: 'value', value: current * current * current };
 
-  const addMatch = lower.match(/\badd\s+(-?\d+(?:\.\d+)?)|\bincrease by\s+(-?\d+(?:\.\d+)?)|\bplus\s+(-?\d+(?:\.\d+)?)/);
+  const numberPattern = '(-?\\d+(?:\\.\\d+)?|[a-z-]+(?:\\s+[a-z-]+)*)';
+  const addMatch = lower.match(new RegExp(`\\badd\\s+${numberPattern}|\\bincrease by\\s+${numberPattern}|\\bplus\\s+${numberPattern}`));
   if (addMatch) {
-    const n = Number(addMatch[1] || addMatch[2] || addMatch[3]);
-    return { type: 'value', value: current + n };
+    const n = parseLevel7Number(addMatch[1] || addMatch[2] || addMatch[3]);
+    if (n !== null) return { type: 'value', value: current + n };
   }
 
-  const subtractMatch = lower.match(/\bsubtract\s+(-?\d+(?:\.\d+)?)|\bdecrease by\s+(-?\d+(?:\.\d+)?)|\bminus\s+(-?\d+(?:\.\d+)?)/);
+  const subtractMatch = lower.match(new RegExp(`\\bsubtract\\s+${numberPattern}|\\bdecrease by\\s+${numberPattern}|\\bminus\\s+${numberPattern}`));
   if (subtractMatch) {
-    const n = Number(subtractMatch[1] || subtractMatch[2] || subtractMatch[3]);
-    return { type: 'value', value: current - n };
+    const n = parseLevel7Number(subtractMatch[1] || subtractMatch[2] || subtractMatch[3]);
+    if (n !== null) return { type: 'value', value: current - n };
   }
 
-  const multiplyMatch = lower.match(/\bmultiply by\s+(-?\d+(?:\.\d+)?)/);
-  if (multiplyMatch) return { type: 'value', value: current * Number(multiplyMatch[1]) };
+  const multiplyMatch = lower.match(new RegExp(`\\bmultiply by\\s+${numberPattern}`));
+  if (multiplyMatch) {
+    const n = parseLevel7Number(multiplyMatch[1]);
+    if (n !== null) return { type: 'value', value: current * n };
+  }
 
-  const divideMatch = lower.match(/\bdivide by\s+(-?\d+(?:\.\d+)?)/);
-  if (divideMatch) return { type: 'value', value: current / Number(divideMatch[1]) };
+  const divideMatch = lower.match(new RegExp(`\\bdivide by\\s+${numberPattern}`));
+  if (divideMatch) {
+    const n = parseLevel7Number(divideMatch[1]);
+    if (n !== null) return { type: 'value', value: current / n };
+  }
 
   return null;
+}
+
+function parseLevel7Number(valueText) {
+  if (valueText == null) return null;
+  const text = String(valueText).trim().toLowerCase();
+  if (!text) return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
+  const parsed = parseNumberWords(text);
+  return parsed === null ? null : Number(parsed);
 }
 
 function answerNamedComparison(raw, q) {
