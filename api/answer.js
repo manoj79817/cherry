@@ -388,10 +388,22 @@ function parseLevel7Sections(text) {
     return sections;
   }
 
-  return normalized
+  const parts = normalized
     .split(/(?:\r?\n|[.;]+)/)
     .map(part => part.trim())
-    .filter(part => /\bif\b|\botherwise\b|\belse\b/i.test(part));
+    .filter(Boolean);
+
+  const sections = [];
+  for (const part of parts) {
+    if (/^(?:otherwise|else|then)\b/i.test(part) && sections.length) {
+      sections[sections.length - 1] += ` ${part}`;
+      continue;
+    }
+    if (/\bif\b|\botherwise\b|\belse\b/i.test(part)) {
+      sections.push(part);
+    }
+  }
+  return sections;
 }
 
 function parseLevel7Section(section, current) {
