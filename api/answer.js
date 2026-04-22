@@ -323,6 +323,8 @@ function parseLevel7Input(text) {
   const firstRuleIndex = lower.search(/\b(?:rule|step)\s*\d+\s*:/);
   const intro = firstRuleIndex >= 0 ? normalized.slice(0, firstRuleIndex) : normalized;
   const patterns = [
+    /(?:apply|use|follow|execute)\s+(?:the\s+)?rules?(?:\s+in\s+order)?\s+(?:to|on|for)\s+(-?\d+(?:\.\d+)?)/i,
+    /(?:apply|use|follow|execute)\s+(?:the\s+)?rules?(?:\s+in\s+order)?\s+(?:to|on|for)\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
     /(?:input|starting|initial|given|start|begin)\s+with\s+(-?\d+(?:\.\d+)?)/i,
     /(?:input|starting|initial|given|start|begin)\s+with\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
     /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s*:\s*(-?\d+(?:\.\d+)?)/i,
@@ -353,9 +355,9 @@ function parseLevel7Input(text) {
 }
 
 function parseLevel7Sections(text) {
-  const markerSections = text.match(/(?:\b(?:rule|step)\s*\d+\s*:[\s\S]*?)(?=(?:\b(?:rule|step)\s*\d+\s*:)|$)/gi);
+  const markerSections = text.match(/(?:\b(?:rule|step)\s*\d+\s*(?:[:\-–—])\s*[\s\S]*?)(?=(?:\b(?:rule|step)\s*\d+\s*(?:[:\-–—]))|$)/gi);
   if (markerSections && markerSections.length) {
-    return markerSections.map(section => section.replace(/^\b(?:rule|step)\s*\d+\s*:\s*/i, '').trim()).filter(Boolean);
+    return markerSections.map(section => section.replace(/^\b(?:rule|step)\s*\d+\s*(?:[:\-–—])\s*/i, '').trim()).filter(Boolean);
   }
 
   return text
@@ -366,20 +368,86 @@ function parseLevel7Sections(text) {
 
 function parseLevel7Section(section, current) {
   const text = String(section || '').replace(/[\u2192\u21D2]/g, '->');
-  const ifPairs = [...text.matchAll(/(?:if|when)\s+(.+?)(?:\s*(?:->|=>|:|,|\?)\s*|\s+then\s+)(.+?)(?=(?:\s*(?:if|when|otherwise|else)\b|$))/gi)];
+  const clauses = text.match(/(?:\b(?:if|when|otherwise|else)\b[\s\S]*?)(?=(?:\b(?:if|when|otherwise|else)\b|$))/gi) || [];
 
-  for (const pair of ifPairs) {
-    if (parseLevel7Condition(pair[1], current)) {
-      return parseLevel7Action(pair[2], current);
+  for (const clause of clauses) {
+    const keyword = clause.match(/^\s*(if|when|otherwise|else)\b/i)?.[1]?.toLowerCase();
+    if (!keyword) continue;
+
+    if (keyword === 'otherwise' || keyword === 'else') {
+      const action = clause.replace(/^\s*(?:otherwise|else)\b/i, '').trim();
+      if (action) return parseLevel7Action(action, current);
+      continue;
+    }
+
+    const body = clause.replace(/^\s*(?:if|when)\b/i, '').trim();
+    const split = splitLevel7ConditionAction(body);
+    if (!split) continue;
+    if (parseLevel7Condition(split.condition, current)) {
+      return parseLevel7Action(split.action, current);
     }
   }
 
-  const otherwiseMatch = text.match(/(?:otherwise|else)(?:\s*(?:->|=>|:|,|\?)\s*|\s+then\s+)(.+)$/i);
-  if (otherwiseMatch) {
-    return parseLevel7Action(otherwiseMatch[1], current);
+  return null;
+}
+
+function splitLevel7ConditionAction(body) {
+  const text = String(body || '').trim();
+  if (!text) return null;
+
+  const separatorMatch = text.match(/^(.*?)(?:\s*(?:->|=>|:|,|\?)\s*|\s+then\s+)(.+)$/i);
+  if (separatorMatch) {
+    return {
+      condition: separatorMatch[1].trim(),
+      action: separatorMatch[2].trim()
+    };
+  }
+
+  const actionIndex = findLevel7ActionStart(text);
+  if (actionIndex > 0) {
+    return {
+      condition: text.slice(0, actionIndex).trim(),
+      action: text.slice(actionIndex).trim()
+    };
   }
 
   return null;
+}
+
+function findLevel7ActionStart(text) {
+  const actionWords = [
+    'output',
+    'return',
+    'say',
+    'print',
+    'respond with',
+    'double',
+    'triple',
+    'half',
+    'halve',
+    'add',
+    'subtract',
+    'decrease',
+    'increase',
+    'multiply',
+    'divide',
+    'set',
+    'make',
+    'become',
+    'becomes',
+    'square',
+    'cube'
+  ];
+
+  const lower = text.toLowerCase();
+  let best = -1;
+  for (const word of actionWords) {
+    const index = lower.indexOf(word);
+    if (index > 0 && (best === -1 || index < best)) {
+      best = index;
+    }
+  }
+  return best;
 }
 
 function parseLevel7Condition(condition, current) {
@@ -424,6 +492,11 @@ function parseLevel7Action(action, current) {
   const directOutput = text.match(/\b(?:output|return|say|print|respond with)\s+([A-Za-z][A-Za-z0-9_-]*)\b/i);
   if (directOutput && !/\bthe\b/i.test(directOutput[0])) {
     return { type: 'output', value: directOutput[1] };
+  }
+
+  const wordOutput = text.match(/\b(?:output|return|say|print|respond with)\s+the\s+word\s+([A-Za-z][A-Za-z0-9_-]*)\b/i);
+  if (wordOutput) {
+    return { type: 'output', value: wordOutput[1] };
   }
 
   const bareToken = text.trim().replace(/[.,;:!?]+$/g, '');
