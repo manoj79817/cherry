@@ -262,21 +262,20 @@ function localAnswer(query) {
 
 function answerNamedComparison(raw, q) {
   const text = String(raw || '');
-  const wantsMax = /\b(highest|highest score|most|largest|greatest|max(?:imum)?|top|best|winner|won)\b/.test(q);
-  const wantsMin = /\b(lowest|least|smallest|min(?:imum)?|fewest|worst)\b/.test(q);
+  const wantsMax = /\b(highest|highest score|most|largest|greatest|max(?:imum)?|top|best|winner|won|higher|better)\b/.test(q);
+  const wantsMin = /\b(lowest|least|smallest|min(?:imum)?|fewest|worst|lower|less)\b/.test(q);
 
   if (!wantsMax && !wantsMin) return null;
 
-  const patterns = [
-    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:scored|got|earned|received|made|has|had|was|is|with)\s+(-?\d+(?:\.\d+)?)/g,
-    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:points?|marks?|votes?)\s*(?:of|:)?\s*(-?\d+(?:\.\d+)?)/g,
-    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*[:=-]?\s*(-?\d+(?:\.\d+)?)/g
-  ];
-
   const pairs = [];
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      pairs.push({ name: match[1].trim(), value: Number(match[2]) });
+  const scorePattern = /(-?\d+(?:\.\d+)?)/g;
+  let match;
+  while ((match = scorePattern.exec(text)) !== null) {
+    const value = Number(match[1]);
+    const before = text.slice(0, match.index).trim();
+    const candidate = extractCandidateName(before);
+    if (candidate) {
+      pairs.push({ name: candidate, value });
     }
   }
 
@@ -289,6 +288,39 @@ function answerNamedComparison(raw, q) {
   }, null);
 
   return best ? best.name : null;
+}
+
+function extractCandidateName(beforeText) {
+  const stopwords = new Set([
+    'who', 'what', 'which', 'where', 'when', 'why', 'how', 'is', 'are', 'was', 'were',
+    'score', 'scores', 'scored', 'scoring', 'got', 'gets', 'get', 'earned', 'earn',
+    'receive', 'received', 'made', 'has', 'had', 'have', 'with', 'highest', 'higher',
+    'lowest', 'lower', 'least', 'smallest', 'largest', 'greatest', 'winner', 'won',
+    'among', 'between', 'and', 'or', 'the', 'a', 'an', 'of', 'to', 'for', 'points',
+    'point', 'marks', 'mark', 'votes', 'vote', 'score', 'scores', 'top', 'best'
+  ]);
+
+  const numberMatches = [...beforeText.matchAll(/-?\d+(?:\.\d+)?/g)];
+  const chunk = numberMatches.length
+    ? beforeText.slice(numberMatches[numberMatches.length - 1].index + numberMatches[numberMatches.length - 1][0].length)
+    : beforeText;
+
+  const tokens = chunk.match(/[A-Za-z][A-Za-z'’-]*/g);
+  if (!tokens || tokens.length === 0) return null;
+
+  while (tokens.length && stopwords.has(tokens[tokens.length - 1].toLowerCase())) {
+    tokens.pop();
+  }
+
+  while (tokens.length && stopwords.has(tokens[0].toLowerCase())) {
+    tokens.shift();
+  }
+
+  if (!tokens.length) return null;
+
+  const candidate = tokens.slice(0, 3).join(' ').trim();
+  if (!candidate || stopwords.has(candidate.toLowerCase())) return null;
+  return candidate;
 }
 
 function answerFilteredNumbers(raw) {
