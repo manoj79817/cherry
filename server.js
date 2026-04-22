@@ -281,20 +281,40 @@ function deterministicAnswer(query) {
 
 function answerFilteredNumbers(raw) {
   const q = String(raw || '').toLowerCase();
-  if (!/\b(sum|total|add|count|average|mean|product)\b/.test(q)) return null;
-  if (!/\b(even|odd|positive|negative|prime|numbers?)\b/.test(q)) return null;
+  if (!/\b(sum|total|add|count|how many|average|mean|product|multiply|largest|smallest|maximum|minimum|max|min)\b/.test(q)) return null;
+  if (!/\b(even|evens|odd|odds|positive|negative|prime|divisible|multiple|multiples|greater|less|above|below|numbers?|integers?|values?)\b/.test(q)) return null;
 
-  const nums = extractNumbers(raw);
+  const nums = extractListNumbers(raw);
   if (nums.length === 0) return null;
 
   let selected = nums;
-  if (/\beven\b/.test(q)) selected = selected.filter(n => Number.isInteger(n) && Math.abs(n) % 2 === 0);
-  if (/\bodd\b/.test(q)) selected = selected.filter(n => Number.isInteger(n) && Math.abs(n) % 2 === 1);
+  if (/\bevens?\b/.test(q)) selected = selected.filter(n => Number.isInteger(n) && Math.abs(n) % 2 === 0);
+  if (/\bodds?\b/.test(q)) selected = selected.filter(n => Number.isInteger(n) && Math.abs(n) % 2 === 1);
   if (/\bpositive\b/.test(q)) selected = selected.filter(n => n > 0);
   if (/\bnegative\b/.test(q)) selected = selected.filter(n => n < 0);
   if (/\bprime\b/.test(q)) selected = selected.filter(n => isPrime(Math.abs(n)));
 
+  const divisibleMatch = q.match(/divisible by\s+(-?\d+)|multiples? of\s+(-?\d+)/);
+  if (divisibleMatch) {
+    const divisor = Math.abs(Number(divisibleMatch[1] || divisibleMatch[2]));
+    if (divisor !== 0) selected = selected.filter(n => Number.isInteger(n) && n % divisor === 0);
+  }
+
+  const greaterMatch = q.match(/(?:greater than|more than|above)\s+(-?\d+(?:\.\d+)?)/);
+  if (greaterMatch) selected = selected.filter(n => n > Number(greaterMatch[1]));
+
+  const lessMatch = q.match(/(?:less than|below|under)\s+(-?\d+(?:\.\d+)?)/);
+  if (lessMatch) selected = selected.filter(n => n < Number(lessMatch[1]));
+
+  const atLeastMatch = q.match(/(?:at least|greater than or equal to)\s+(-?\d+(?:\.\d+)?)/);
+  if (atLeastMatch) selected = selected.filter(n => n >= Number(atLeastMatch[1]));
+
+  const atMostMatch = q.match(/(?:at most|less than or equal to)\s+(-?\d+(?:\.\d+)?)/);
+  if (atMostMatch) selected = selected.filter(n => n <= Number(atMostMatch[1]));
+
   if (/\bcount\b|\bhow many\b/.test(q)) return String(selected.length);
+  if (/\b(?:largest|maximum|max|highest)\b/.test(q)) return selected.length ? formatNumber(Math.max(...selected)) : '0';
+  if (/\b(?:smallest|minimum|min|lowest)\b/.test(q)) return selected.length ? formatNumber(Math.min(...selected)) : '0';
   if (/\baverage\b|\bmean\b/.test(q)) {
     if (selected.length === 0) return '0';
     return formatNumber(selected.reduce((a, b) => a + b, 0) / selected.length);
@@ -310,9 +330,32 @@ function answerFilteredNumbers(raw) {
   return null;
 }
 
+function extractListNumbers(raw) {
+  const text = String(raw || '');
+  const listMatch = text.match(/(?:numbers?|integers?|values?|list|array)\s*[:=]\s*([^.;\n]+)/i);
+  if (listMatch) {
+    const parsed = extractNumbers(listMatch[1]);
+    if (parsed.length) return parsed;
+  }
+
+  const bracketMatch = text.match(/\[([^\]]+)\]|\(([^\)]+)\)/);
+  if (bracketMatch) {
+    const parsed = extractNumbers(bracketMatch[1] || bracketMatch[2]);
+    if (parsed.length) return parsed;
+  }
+
+  return extractNumbers(raw);
+}
+
 function extractNumbers(raw) {
-  const explicit = String(raw || '').match(/-?\d+(?:\.\d+)?/g);
-  if (explicit?.length) return explicit.map(Number);
+  const explicit = String(raw || '').match(/(?:minus|negative)?\s*-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/gi);
+  if (explicit?.length) {
+    return explicit.map(value => {
+      const isNegative = /\b(minus|negative)\b/i.test(value);
+      const parsed = Number(value.replace(/\b(minus|negative)\b/gi, '').replace(/,/g, '').trim());
+      return isNegative ? -Math.abs(parsed) : parsed;
+    });
+  }
 
   const words = String(raw || '').toLowerCase().match(/\b(?:minus |negative )?(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and|-|\s)+\b/g) || [];
   return words
