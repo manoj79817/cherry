@@ -284,10 +284,13 @@ function deterministicAnswer(query) {
 
 function answerNamedComparison(raw, q) {
   const text = String(raw || '');
+  const wantsPerson = /\bwho\b/.test(q) || /\bwhich\s+(?:person|player|student|candidate|team|participant|contestant)\b/.test(q) || /\bwinner\b|\bchampion\b/.test(q);
+  const wantsNumeric = /\bwhat\b/.test(q) || /\bhow much\b/.test(q) || /\bhow many\b/.test(q) || /\b(score|scores|point|points|mark|marks|vote|votes|number|numbers)\b/.test(q);
   const wantsMax = /\b(highest|highest score|most|largest|greatest|max(?:imum)?|top|best|winner|won|higher|better)\b/.test(q);
   const wantsMin = /\b(lowest|least|smallest|min(?:imum)?|fewest|worst|lower|less)\b/.test(q);
 
   if (!wantsMax && !wantsMin) return null;
+  if (wantsNumeric && !wantsPerson) return null;
 
   const pairs = [];
   const scorePattern = /(-?\d+(?:\.\d+)?)/g;
