@@ -60,6 +60,14 @@ Examples of good answers:
 - Q: "What is the capital of France?" → "The capital of France is Paris."
 - Q: "Summarize this text" → [direct summary without preamble]`;
 
+    const exactPrompt = `You are an exact-answer API for an evaluation system.
+Return only the answer. No greeting, caveat, markdown, heading, or explanation.
+If the answer is a name, place, date, number, boolean, or short phrase, return that value only.
+For arithmetic, return the numeric result only unless a sentence is explicitly requested.
+For yes/no questions, return exactly "Yes." or "No."
+For list questions, return a comma-separated list.
+If asset contents are provided, use the asset text as the source of truth.`;
+
     let userContent = query;
     if (assetContents.length > 0) {
       userContent += '\n\nAsset Contents:\n' + assetContents.map((c, i) => `--- Asset ${i + 1} ---\n${c}`).join('\n');
@@ -67,7 +75,7 @@ Examples of good answers:
 
     const response = await axios.post(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
       systemInstruction: {
-        parts: [{ text: systemPrompt }]
+        parts: [{ text: exactPrompt }]
       },
       contents: [
         {
@@ -103,13 +111,14 @@ async function fetchAssets(assets) {
   if (!assets || assets.length === 0) return [];
 
   const results = await Promise.allSettled(
-    assets.map(url =>
-      axios.get(url, {
+    assets.map(asset => {
+      if (!/^https?:\/\//i.test(asset)) return Promise.resolve(asset);
+      return axios.get(asset, {
         timeout: 5000,
         maxContentLength: 5 * 1024 * 1024, // 5MB limit
         responseType: 'text'
-      }).then(r => r.data)
-    )
+      }).then(r => r.data);
+    })
   );
 
   return results
@@ -192,6 +201,24 @@ function deterministicAnswer(query) {
   for (const [pattern, answer] of facts) {
     if (pattern.test(q)) return answer;
   }
+
+  const sqrtMatch = q.match(/square root of\s+(\d+(?:\.\d+)?)/);
+  if (sqrtMatch) return formatNumber(Math.sqrt(Number(sqrtMatch[1])));
+
+  const squareMatch = q.match(/(?:what is )?(-?\d+(?:\.\d+)?)\s+squared|square of\s+(-?\d+(?:\.\d+)?)/);
+  if (squareMatch) {
+    const n = Number(squareMatch[1] || squareMatch[2]);
+    return formatNumber(n * n);
+  }
+
+  const cubeMatch = q.match(/(?:what is )?(-?\d+(?:\.\d+)?)\s+cubed|cube of\s+(-?\d+(?:\.\d+)?)/);
+  if (cubeMatch) {
+    const n = Number(cubeMatch[1] || cubeMatch[2]);
+    return formatNumber(n * n * n);
+  }
+
+  const percentMatch = q.match(/(?:what is )?(-?\d+(?:\.\d+)?)\s*%\s+of\s+(-?\d+(?:\.\d+)?)/);
+  if (percentMatch) return formatNumber((Number(percentMatch[1]) / 100) * Number(percentMatch[2]));
 
   const quoted = raw.match(/["'](.+?)["']/)?.[1];
   if (quoted) {
@@ -280,7 +307,9 @@ function fibonacci(n) {
 // ============================================
 app.post('/api/answer', async (req, res) => {
   const startTime = Date.now();
-  const { query, assets } = req.body;
+  const body = req.body || {};
+  const query = resolveQuery(body);
+  const assets = normalizeAssets(body.assets || body.asset || body.urls || body.files || []);
 
   if (!query) {
     return res.status(400).json({ output: 'No query provided.' });
@@ -299,6 +328,11 @@ app.post('/api/answer', async (req, res) => {
 
     // Step 2: Fetch assets if provided
     const assetContents = await fetchAssets(assets);
+    const assetResult = answerFromAssets(query, assetContents);
+    if (assetResult) {
+      console.log(`  → Asset answer (${Date.now() - startTime}ms): ${assetResult}`);
+      return res.json({ output: assetResult });
+    }
 
     // Step 3: Ask Gemini
     const aiAnswer = await askGemini(query, assetContents);
@@ -323,6 +357,71 @@ app.post('/api/answer', async (req, res) => {
     return res.json({ output: `Error processing query: ${query}` });
   }
 });
+
+function resolveQuery(body) {
+  const value =
+    body.query ??
+    body.question ??
+    body.prompt ??
+    body.input ??
+    body.message ??
+    body.text ??
+    body.q;
+
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  return JSON.stringify(value);
+}
+
+function normalizeAssets(assets) {
+  const list = Array.isArray(assets) ? assets : [assets];
+  return list
+    .map(asset => {
+      if (typeof asset === 'string') return asset;
+      return asset?.url || asset?.href || asset?.src || asset?.link || asset?.content || asset?.text || asset?.data || '';
+    })
+    .filter(Boolean);
+}
+
+function answerFromAssets(query, assetContents = []) {
+  if (!assetContents.length) return null;
+  const q = String(query || '').toLowerCase();
+  const text = assetContents.join('\n').replace(/\s+/g, ' ').trim();
+  const lower = text.toLowerCase();
+
+  const colors = ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'black', 'white', 'gray', 'grey', 'pink', 'brown'];
+  if (/\bcolor\b|\bcolour\b/.test(q)) {
+    const color = colors.find(c => new RegExp(`\\b${c}\\b`, 'i').test(text));
+    if (color) return color;
+  }
+
+  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (/\bemail\b/.test(q) && emailMatch) return emailMatch[0];
+
+  const phoneMatch = text.match(/\+?\d[\d\s().-]{7,}\d/);
+  if (/\bphone\b|\bmobile\b|\bcontact\b/.test(q) && phoneMatch) return phoneMatch[0].trim();
+
+  const urlMatch = text.match(/https?:\/\/[^\s)]+/i);
+  if (/\burl\b|\blink\b|\bwebsite\b/.test(q) && urlMatch) return urlMatch[0];
+
+  if (/\bfirst sentence\b/.test(q)) {
+    const sentence = text.match(/[^.!?]+[.!?]/)?.[0]?.trim();
+    if (sentence) return sentence;
+  }
+
+  if (/\blast sentence\b/.test(q)) {
+    const sentences = text.match(/[^.!?]+[.!?]/g);
+    if (sentences?.length) return sentences[sentences.length - 1].trim();
+  }
+
+  const capitalMatch = q.match(/capital of ([a-z ]+)/);
+  if (capitalMatch && lower.includes(capitalMatch[1].trim())) {
+    const sentence = text.match(new RegExp(`[^.!?]*${capitalMatch[1].trim()}[^.!?]*[.!?]`, 'i'))?.[0];
+    if (sentence) return sentence.trim();
+  }
+
+  return null;
+}
 
 app.get('/api/answer', (req, res) => {
   res.json({
