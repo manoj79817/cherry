@@ -38,8 +38,8 @@ module.exports = async (req, res) => {
       return res.json({ output: localResult });
     }
 
-    // Try OpenAI if key is available
-    const aiAnswer = await askOpenAI(query, assets);
+    // Try Gemini if key is available
+    const aiAnswer = await askGemini(query, assets);
     if (aiAnswer) {
       return res.json({ output: aiAnswer });
     }
@@ -108,11 +108,15 @@ function localAnswer(query) {
 }
 
 // ============================================
-// OpenAI Integration (optional)
+// Gemini Integration (optional)
 // ============================================
-async function askOpenAI(query, assets) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || apiKey === 'your_openai_api_key_here') {
+async function askGemini(query, assets) {
+  const apiKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+    process.env.API_KEY;
+  if (!apiKey || apiKey === 'your_gemini_api_key_here') {
     return null;
   }
 
@@ -143,28 +147,37 @@ RULES:
       }
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: query + assetText }
+        systemInstruction: {
+          parts: [{ text: systemPrompt }]
+        },
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: query + assetText }]
+          }
         ],
-        temperature: 0.1,
-        max_tokens: 2000
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 1024
+        }
       }),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(12000)
     });
 
     const data = await response.json();
-    return data.choices?.[0]?.message?.content?.trim() || null;
+    return data.candidates?.[0]?.content?.parts
+      ?.map(part => part.text || '')
+      .join('')
+      .trim() || null;
   } catch (error) {
-    console.error('OpenAI Error:', error.message);
+    console.error('Gemini Error:', error.message);
     return null;
   }
 }

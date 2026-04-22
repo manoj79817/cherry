@@ -4,7 +4,7 @@
  * Accepts POST { query, assets } → Returns { output }
  * Evaluated on cosine similarity and Jaccard scoring.
  * 
- * Uses OpenAI GPT-4o-mini for intelligent answers,
+ * Uses Gemini for intelligent answers,
  * with smart fallbacks for common patterns.
  */
 
@@ -22,13 +22,18 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.static(__dirname));
 
 // ============================================
-// OpenAI Integration
+// Gemini Integration
 // ============================================
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+const GEMINI_API_KEY =
+  process.env.GEMINI_API_KEY ||
+  process.env.GOOGLE_API_KEY ||
+  process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+  process.env.API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-async function askOpenAI(query, assetContents = []) {
-  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your_openai_api_key_here') {
+async function askGemini(query, assetContents = []) {
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
     return null; // Will fall back to local logic
   }
 
@@ -56,25 +61,33 @@ Examples of good answers:
       userContent += '\n\nAsset Contents:\n' + assetContents.map((c, i) => `--- Asset ${i + 1} ---\n${c}`).join('\n');
     }
 
-    const response = await axios.post(OPENAI_URL, {
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent }
+    const response = await axios.post(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
+      systemInstruction: {
+        parts: [{ text: systemPrompt }]
+      },
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: userContent }]
+        }
       ],
-      temperature: 0.1,
-      max_tokens: 2000
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 1024
+      }
     }, {
       headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json'
       },
-      timeout: 18000 // 18s to stay under 20s limit
+      timeout: 12000
     });
 
-    return response.data.choices[0].message.content.trim();
+    return response.data.candidates?.[0]?.content?.parts
+      ?.map(part => part.text || '')
+      .join('')
+      .trim() || null;
   } catch (error) {
-    console.error('OpenAI Error:', error.response?.data || error.message);
+    console.error('Gemini Error:', error.response?.data || error.message);
     return null;
   }
 }
@@ -174,21 +187,21 @@ app.post('/api/answer', async (req, res) => {
     // Step 2: Fetch assets if provided
     const assetContents = await fetchAssets(assets);
 
-    // Step 3: Ask OpenAI
-    const aiAnswer = await askOpenAI(query, assetContents);
+    // Step 3: Ask Gemini
+    const aiAnswer = await askGemini(query, assetContents);
     if (aiAnswer) {
       console.log(`  → AI answer (${Date.now() - startTime}ms): ${aiAnswer.substring(0, 100)}...`);
       return res.json({ output: aiAnswer });
     }
 
-    // Step 4: If OpenAI fails, use local fallback
+    // Step 4: If Gemini fails, use local fallback
     if (localResult) {
       console.log(`  → Fallback local (${Date.now() - startTime}ms): ${localResult}`);
       return res.json({ output: localResult });
     }
 
     // Step 5: Generic fallback
-    const fallback = `I don't have enough information to answer: "${query}"`;
+    const fallback = `I cannot determine the answer.`;
     console.log(`  → Generic fallback (${Date.now() - startTime}ms)`);
     return res.json({ output: fallback });
 
@@ -260,6 +273,6 @@ app.listen(PORT, () => {
   console.log(`   POST http://localhost:${PORT}/v1/answer`);
   console.log(`   POST http://localhost:${PORT}/answer`);
   console.log(`   POST http://localhost:${PORT}/`);
-  console.log(`\n🔑 OpenAI API Key: ${OPENAI_API_KEY && OPENAI_API_KEY !== 'your_openai_api_key_here' ? '✅ Configured' : '❌ Not set (using local fallback only)'}`);
+  console.log(`\nGemini API Key: ${GEMINI_API_KEY && GEMINI_API_KEY !== 'your_gemini_api_key_here' ? 'Configured' : 'Not set (using local fallback only)'}`);
   console.log(`\n💡 To expose publicly, run: npx ngrok http ${PORT}`);
 });
