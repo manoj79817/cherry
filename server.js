@@ -277,17 +277,53 @@ function deterministicAnswer(query) {
 }
 
 function answerOddEven(q) {
-  const oddMatch = q.match(/\b(?:is\s+)?(-?\d+)\s+(?:an?\s+)?odd(?:\s+number)?\b/);
-  if (oddMatch) return Math.abs(Number(oddMatch[1])) % 2 === 1 ? 'YES' : 'NO';
+  if (!/\b(odd|even|parity)\b/.test(q)) return null;
 
-  const evenMatch = q.match(/\b(?:is\s+)?(-?\d+)\s+(?:an?\s+)?even(?:\s+number)?\b/);
-  if (evenMatch) return Math.abs(Number(evenMatch[1])) % 2 === 0 ? 'YES' : 'NO';
+  const asksOdd = /\bodd\b/.test(q);
+  const asksEven = /\beven\b/.test(q);
+  const value = extractParityValue(q);
+  if (value === null) return null;
 
-  const parityMatch = q.match(/\b(?:is\s+)?(-?\d+)\s+(?:odd|even)\?/);
-  if (parityMatch) {
-    const asksOdd = /\bodd\b/.test(q);
-    const isOdd = Math.abs(Number(parityMatch[1])) % 2 === 1;
-    return asksOdd === isOdd ? 'YES' : 'NO';
+  const isOddValue = Math.abs(value) % 2 === 1;
+  if (asksOdd) return isOddValue ? 'YES' : 'NO';
+  if (asksEven) return !isOddValue ? 'YES' : 'NO';
+  return isOddValue ? 'ODD' : 'EVEN';
+}
+
+function extractParityValue(q) {
+  const numberWords = {
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+    seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20
+  };
+
+  const expr = parseSimpleExpression(q);
+  if (expr !== null) return expr;
+
+  const digitMatch = q.match(/-?\d+/);
+  if (digitMatch) return Number(digitMatch[0]);
+
+  const wordMatch = q.match(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b/);
+  if (wordMatch) return numberWords[wordMatch[1]];
+
+  return null;
+}
+
+function parseSimpleExpression(q) {
+  const patterns = [
+    { re: /sum of (-?\d+) and (-?\d+)/, fn: (a, b) => a + b },
+    { re: /add (-?\d+) and (-?\d+)/, fn: (a, b) => a + b },
+    { re: /(-?\d+)\s*\+\s*(-?\d+)/, fn: (a, b) => a + b },
+    { re: /difference between (-?\d+) and (-?\d+)/, fn: (a, b) => a - b },
+    { re: /(-?\d+)\s*-\s*(-?\d+)/, fn: (a, b) => a - b },
+    { re: /product of (-?\d+) and (-?\d+)/, fn: (a, b) => a * b },
+    { re: /multiply (-?\d+) and (-?\d+)/, fn: (a, b) => a * b },
+    { re: /(-?\d+)\s*(?:x|\*)\s*(-?\d+)/, fn: (a, b) => a * b }
+  ];
+
+  for (const { re, fn } of patterns) {
+    const match = q.match(re);
+    if (match) return fn(Number(match[1]), Number(match[2]));
   }
 
   return null;
