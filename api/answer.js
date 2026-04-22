@@ -115,7 +115,7 @@ function localAnswer(query) {
   const raw = String(query || '').trim();
   const q = raw.toLowerCase();
 
-  const ruleChainResult = ruleChainAnswer(raw);
+  const ruleChainResult = evaluateLevel7(raw);
   if (ruleChainResult !== null) return ruleChainResult;
 
   const namedComparisonAnswer = answerNamedComparison(raw, q);
@@ -264,21 +264,25 @@ function localAnswer(query) {
 }
 
 function ruleChainAnswer(raw) {
-  const text = String(raw || '').trim();
+  return solveRuleChain(raw);
+}
+
+function solveRuleChain(raw) {
+  const text = String(raw || '').trim().replace(/[\u2192\u21D2]/g, '->');
   const lower = text.toLowerCase();
 
-  const hasRules = /\brule\s*\d+\s*:/.test(lower) || (/\bif\b/.test(lower) && (/\bthen\b/.test(lower) || /->|=>|:|,/.test(text)));
+  const hasRules = /\b(?:rule|step)\s*\d+\s*:/.test(lower) || (/\bif\b/.test(lower) && (/\bthen\b/.test(lower) || /->|=>|:|,/.test(text)));
   if (!hasRules) return null;
 
   const input = extractRuleInputNumber(text);
   if (input === null) return null;
 
-  const blocks = [...text.matchAll(/rule\s*\d+\s*:\s*([\s\S]*?)(?=(?:rule\s*\d+\s*:)|$)/gi)].map(match => match[1].trim()).filter(Boolean);
-  if (!blocks.length) return null;
+  const sections = extractRuleSections(text);
+  if (!sections.length) return null;
 
   let current = input;
-  for (const block of blocks) {
-    const outcome = evaluateRuleBlock(block, current);
+  for (const section of sections) {
+    const outcome = evaluateRuleBlock(section, current);
     if (!outcome) continue;
     if (outcome.type === 'output') return outcome.value;
     current = outcome.value;
@@ -287,10 +291,193 @@ function ruleChainAnswer(raw) {
   return formatNumber(current);
 }
 
+function evaluateLevel7(raw) {
+  const text = String(raw || '').trim().replace(/[\u2192\u21D2]/g, '->');
+  const lower = text.toLowerCase();
+  const looksLikeRules =
+    /\b(?:rule|step)\s*\d+\s*:/.test(lower) ||
+    (/\bif\b/.test(lower) && (/\bthen\b/.test(lower) || /->|=>|:|,|\?/.test(text)));
+
+  if (!looksLikeRules) return null;
+
+  const input = parseLevel7Input(text);
+  if (input === null) return null;
+
+  const sections = parseLevel7Sections(text);
+  if (!sections.length) return null;
+
+  let current = input;
+  for (const section of sections) {
+    const result = parseLevel7Section(section, current);
+    if (!result) continue;
+    if (result.type === 'output') return result.value;
+    current = result.value;
+  }
+
+  return formatNumber(current);
+}
+
+function parseLevel7Input(text) {
+  const normalized = String(text || '').replace(/[\u2192\u21D2]/g, '->');
+  const lower = normalized.toLowerCase();
+  const firstRuleIndex = lower.search(/\b(?:rule|step)\s*\d+\s*:/);
+  const intro = firstRuleIndex >= 0 ? normalized.slice(0, firstRuleIndex) : normalized;
+  const patterns = [
+    /(?:input|starting|initial|given|start|begin)\s+with\s+(-?\d+(?:\.\d+)?)/i,
+    /(?:input|starting|initial|given|start|begin)\s+with\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
+    /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s*:\s*(-?\d+(?:\.\d+)?)/i,
+    /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s+(-?\d+(?:\.\d+)?)/i,
+    /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s*:\s*([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
+    /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
+    /input number\s+(-?\d+(?:\.\d+)?)/i,
+    /input number\s*:\s*(-?\d+(?:\.\d+)?)/i,
+    /given input\s+(-?\d+(?:\.\d+)?)/i,
+    /given input number\s+(-?\d+(?:\.\d+)?)/i,
+    /input value\s+(-?\d+(?:\.\d+)?)/i,
+    /starting number\s+(-?\d+(?:\.\d+)?)/i,
+    /initial number\s+(-?\d+(?:\.\d+)?)/i,
+    /input\s*:\s*(-?\d+(?:\.\d+)?)/i,
+    /input\s+(-?\d+(?:\.\d+)?)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = intro.match(pattern) || normalized.match(pattern);
+    if (!match) continue;
+    if (/^-?\d+(?:\.\d+)?$/.test(match[1])) return Number(match[1]);
+    const parsed = parseNumberWords(match[1]);
+    if (parsed !== null) return parsed;
+  }
+
+  const wordNumber = parseNumberWords(intro) ?? parseNumberWords(normalized);
+  return wordNumber !== null ? Number(wordNumber) : null;
+}
+
+function parseLevel7Sections(text) {
+  const markerSections = text.match(/(?:\b(?:rule|step)\s*\d+\s*:[\s\S]*?)(?=(?:\b(?:rule|step)\s*\d+\s*:)|$)/gi);
+  if (markerSections && markerSections.length) {
+    return markerSections.map(section => section.replace(/^\b(?:rule|step)\s*\d+\s*:\s*/i, '').trim()).filter(Boolean);
+  }
+
+  return text
+    .split(/(?:\r?\n|[.;]+)/)
+    .map(part => part.trim())
+    .filter(part => /\bif\b|\botherwise\b|\belse\b/i.test(part));
+}
+
+function parseLevel7Section(section, current) {
+  const text = String(section || '').replace(/[\u2192\u21D2]/g, '->');
+  const ifPairs = [...text.matchAll(/(?:if|when)\s+(.+?)(?:\s*(?:->|=>|:|,|\?)\s*|\s+then\s+)(.+?)(?=(?:\s*(?:if|when|otherwise|else)\b|$))/gi)];
+
+  for (const pair of ifPairs) {
+    if (parseLevel7Condition(pair[1], current)) {
+      return parseLevel7Action(pair[2], current);
+    }
+  }
+
+  const otherwiseMatch = text.match(/(?:otherwise|else)(?:\s*(?:->|=>|:|,|\?)\s*|\s+then\s+)(.+)$/i);
+  if (otherwiseMatch) {
+    return parseLevel7Action(otherwiseMatch[1], current);
+  }
+
+  return null;
+}
+
+function parseLevel7Condition(condition, current) {
+  const c = String(condition || '').toLowerCase().replace(/[().,]/g, ' ');
+  const value = Number(current);
+
+  const divMatch = c.match(/(?:divisible by|multiple of)\s+(-?\d+(?:\.\d+)?)/);
+  if (divMatch) return Number(divMatch[1]) !== 0 && value % Number(divMatch[1]) === 0;
+
+  const gtMatch = c.match(/(?:>|greater than)\s*(-?\d+(?:\.\d+)?)/);
+  if (gtMatch) return value > Number(gtMatch[1]);
+
+  const gteMatch = c.match(/(?:>=|at least|greater than or equal to)\s*(-?\d+(?:\.\d+)?)/);
+  if (gteMatch) return value >= Number(gteMatch[1]);
+
+  const ltMatch = c.match(/(?:<|less than)\s*(-?\d+(?:\.\d+)?)/);
+  if (ltMatch) return value < Number(ltMatch[1]);
+
+  const lteMatch = c.match(/(?:<=|at most|less than or equal to)\s*(-?\d+(?:\.\d+)?)/);
+  if (lteMatch) return value <= Number(lteMatch[1]);
+
+  if (/\beven\b/.test(c)) return Number.isInteger(value) && Math.abs(value) % 2 === 0;
+  if (/\bodd\b/.test(c)) return Number.isInteger(value) && Math.abs(value) % 2 === 1;
+  if (/\bprime\b/.test(c)) return isPrime(Math.abs(value));
+
+  return false;
+}
+
+function parseLevel7Action(action, current) {
+  const text = String(action || '').trim().replace(/[\u2192\u21D2]/g, '->');
+  const lower = text.toLowerCase();
+
+  const quoted = text.match(/["']([^"']+)["']/)?.[1];
+  if (quoted !== undefined && (/\boutput\b|\breturn\b|\bsay\b|\bprint\b|\brespond\b|\bresult\b/.test(lower))) {
+    return { type: 'output', value: quoted };
+  }
+
+  if (/\boutput the number\b|\boutput number\b|\boutput the result\b|\boutput result\b|\breturn the number\b|\breturn the result\b|\bsay the number\b|\bprint the number\b/.test(lower)) {
+    return { type: 'output', value: formatNumber(current) };
+  }
+
+  const directOutput = text.match(/\b(?:output|return|say|print|respond with)\s+([A-Za-z][A-Za-z0-9_-]*)\b/i);
+  if (directOutput && !/\bthe\b/i.test(directOutput[0])) {
+    return { type: 'output', value: directOutput[1] };
+  }
+
+  const bareToken = text.trim().replace(/[.,;:!?]+$/g, '');
+  if (bareToken && /^[A-Za-z][A-Za-z0-9_-]*$/.test(bareToken) && !/^(if|then|else|otherwise|rule|step|double|triple|half|halve|square|cube|add|subtract|decrease|increase|multiply|divide|output|return|say|print|respond|even|odd)$/i.test(bareToken)) {
+    return { type: 'output', value: bareToken };
+  }
+
+  if (/\bdouble\b/.test(lower)) return { type: 'value', value: current * 2 };
+  if (/\btriple\b/.test(lower)) return { type: 'value', value: current * 3 };
+  if (/\bhalf\b|\bhalve\b/.test(lower)) return { type: 'value', value: current / 2 };
+  if (/\bsquare\b/.test(lower)) return { type: 'value', value: current * current };
+  if (/\bcube\b/.test(lower)) return { type: 'value', value: current * current * current };
+
+  const addMatch = lower.match(/\badd\s+(-?\d+(?:\.\d+)?)|\bincrease by\s+(-?\d+(?:\.\d+)?)|\bplus\s+(-?\d+(?:\.\d+)?)/);
+  if (addMatch) {
+    const n = Number(addMatch[1] || addMatch[2] || addMatch[3]);
+    return { type: 'value', value: current + n };
+  }
+
+  const subtractMatch = lower.match(/\bsubtract\s+(-?\d+(?:\.\d+)?)|\bdecrease by\s+(-?\d+(?:\.\d+)?)|\bminus\s+(-?\d+(?:\.\d+)?)/);
+  if (subtractMatch) {
+    const n = Number(subtractMatch[1] || subtractMatch[2] || subtractMatch[3]);
+    return { type: 'value', value: current - n };
+  }
+
+  const multiplyMatch = lower.match(/\bmultiply by\s+(-?\d+(?:\.\d+)?)/);
+  if (multiplyMatch) return { type: 'value', value: current * Number(multiplyMatch[1]) };
+
+  const divideMatch = lower.match(/\bdivide by\s+(-?\d+(?:\.\d+)?)/);
+  if (divideMatch) return { type: 'value', value: current / Number(divideMatch[1]) };
+
+  const setMatch = lower.match(/\b(?:set|make|become|becomes|result is)\s+(-?\d+(?:\.\d+)?)/);
+  if (setMatch) return { type: 'value', value: Number(setMatch[1]) };
+
+  return null;
+}
+
+function extractRuleSections(text) {
+  const markerSections = text.match(/(?:\b(?:rule|step)\s*\d+\s*:[\s\S]*?)(?=(?:\b(?:rule|step)\s*\d+\s*:)|$)/gi);
+  if (markerSections && markerSections.length) {
+    return markerSections.map(section => section.replace(/^\b(?:rule|step)\s*\d+\s*:\s*/i, '').trim()).filter(Boolean);
+  }
+
+  return text
+    .split(/(?:\r?\n|[.;]+)/)
+    .map(part => part.trim())
+    .filter(part => /\bif\b|\botherwise\b|\belse\b/i.test(part));
+}
+
 function extractRuleInputNumber(text) {
-  const lower = String(text || '').toLowerCase();
+  const normalized = String(text || '').replace(/[\u2192\u21D2]/g, '->');
+  const lower = normalized.toLowerCase();
   const firstRuleIndex = lower.search(/\brule\s*\d+\s*:/);
-  const intro = firstRuleIndex >= 0 ? text.slice(0, firstRuleIndex) : text;
+  const intro = firstRuleIndex >= 0 ? normalized.slice(0, firstRuleIndex) : normalized;
 
   const patterns = [
     /(?:input|starting|initial|given|start|begin)\s+with\s+(-?\d+(?:\.\d+)?)/i,
@@ -311,7 +498,7 @@ function extractRuleInputNumber(text) {
   ];
 
   for (const pattern of patterns) {
-    const match = intro.match(pattern) || text.match(pattern);
+    const match = intro.match(pattern) || normalized.match(pattern);
     if (match) {
       if (/^-?\d+(?:\.\d+)?$/.test(match[1])) return Number(match[1]);
       const parsed = parseNumberWords(match[1]);
@@ -319,14 +506,14 @@ function extractRuleInputNumber(text) {
     }
   }
 
-  const wordNumber = parseNumberWords(intro) ?? parseNumberWords(text);
+  const wordNumber = parseNumberWords(intro) ?? parseNumberWords(normalized);
   if (wordNumber !== null) return Number(wordNumber);
 
   return null;
 }
 
 function evaluateRuleBlock(block, current) {
-  const text = String(block || '');
+  const text = String(block || '').replace(/[\u2192\u21D2]/g, '->');
   const ifPairs = [...text.matchAll(/(?:if|when)\s+(.+?)(?:\s*(?:->|=>|:|,)\s*|\s+then\s+)(.+?)(?=(?:\s*(?:if|when|otherwise|else)\b|$))/gi)];
 
   for (const pair of ifPairs) {
@@ -369,7 +556,7 @@ function evaluateRuleCondition(condition, current) {
 }
 
 function applyRuleAction(action, current) {
-  const text = String(action || '').trim();
+  const text = String(action || '').trim().replace(/[\u2192\u21D2]/g, '->');
   const lower = text.toLowerCase();
 
   const quoted = text.match(/["']([^"']+)["']/)?.[1];
@@ -423,7 +610,7 @@ function applyRuleAction(action, current) {
 }
 
 function answerNamedComparison(raw, q) {
-  const text = String(raw || '');
+  const text = String(raw || '').replace(/[\u2192\u21D2]/g, '->');
   const wantsPerson = /\bwho\b/.test(q) || /\bwhich\s+(?:person|player|student|candidate|team|participant|contestant)\b/.test(q) || /\bwinner\b|\bchampion\b/.test(q);
   const wantsNumeric = /\bwhat\b/.test(q) || /\bhow much\b/.test(q) || /\bhow many\b/.test(q) || /\b(score|scores|point|points|mark|marks|vote|votes|number|numbers)\b/.test(q);
   const wantsMax = /\b(highest|highest score|most|largest|greatest|max(?:imum)?|top|best|winner|won|higher|better)\b/.test(q);
