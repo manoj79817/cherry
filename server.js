@@ -181,6 +181,9 @@ function deterministicAnswer(query) {
   const raw = String(query || '').trim();
   const q = raw.toLowerCase();
 
+  const extractedDate = extractDate(raw);
+  if (extractedDate) return extractedDate;
+
   const facts = [
     [/capital of france/, 'The capital of France is Paris.'],
     [/capital of india/, 'The capital of India is New Delhi.'],
@@ -268,6 +271,66 @@ function deterministicAnswer(query) {
   if (decimalToBinaryMatch && /\bbinary\b/.test(q)) return Number(decimalToBinaryMatch[1] || decimalToBinaryMatch[2]).toString(2);
 
   return null;
+}
+
+function extractDate(input) {
+  const text = String(input || '');
+  const months = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)';
+  const monthNames = {
+    jan: 'January', january: 'January',
+    feb: 'February', february: 'February',
+    mar: 'March', march: 'March',
+    apr: 'April', april: 'April',
+    may: 'May',
+    jun: 'June', june: 'June',
+    jul: 'July', july: 'July',
+    aug: 'August', august: 'August',
+    sep: 'September', sept: 'September', september: 'September',
+    oct: 'October', october: 'October',
+    nov: 'November', november: 'November',
+    dec: 'December', december: 'December'
+  };
+
+  const ordinal = '(?:st|nd|rd|th)?';
+  const day = '(?:[0-2]?\\d|3[01])';
+  const year = '(?:\\d{4})';
+
+  let match = text.match(new RegExp(`\\b(${day})${ordinal}\\s+(${months})\\s*,?\\s*(${year})\\b`, 'i'));
+  if (match) return `${Number(match[1])} ${normalizeMonth(match[2], monthNames)} ${match[3]}`;
+
+  match = text.match(new RegExp(`\\b(${months})\\s+(${day})${ordinal}\\s*,?\\s*(${year})\\b`, 'i'));
+  if (match) return `${normalizeMonth(match[1], monthNames)} ${Number(match[2])}, ${match[3]}`;
+
+  match = text.match(new RegExp(`\\b(${day})${ordinal}\\s+of\\s+(${months})\\s*,?\\s*(${year})\\b`, 'i'));
+  if (match) return `${Number(match[1])} ${normalizeMonth(match[2], monthNames)} ${match[3]}`;
+
+  match = text.match(new RegExp(`\\b(${day})${ordinal}\\s+(${months})\\b`, 'i'));
+  if (match) return `${Number(match[1])} ${normalizeMonth(match[2], monthNames)}`;
+
+  match = text.match(new RegExp(`\\b(${months})\\s+(${day})${ordinal}\\b`, 'i'));
+  if (match) return `${normalizeMonth(match[1], monthNames)} ${Number(match[2])}`;
+
+  match = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (match) return `${match[1]}-${pad2(match[2])}-${pad2(match[3])}`;
+
+  match = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
+  if (match) return `${pad2(match[1])}/${pad2(match[2])}/${match[3]}`;
+
+  match = text.match(/\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b/);
+  if (match) return `${match[1]}/${pad2(match[2])}/${pad2(match[3])}`;
+
+  match = text.match(/\b(?:today|tomorrow|yesterday)\b/i);
+  if (match) return match[0].toLowerCase();
+
+  return null;
+}
+
+function normalizeMonth(month, monthNames) {
+  return monthNames[String(month).toLowerCase().replace('.', '')] || month;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
 }
 
 function formatNumber(value) {
