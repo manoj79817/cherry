@@ -181,6 +181,9 @@ function deterministicAnswer(query) {
   const raw = String(query || '').trim();
   const q = raw.toLowerCase();
 
+  const oddEvenAnswer = answerOddEven(q);
+  if (oddEvenAnswer) return oddEvenAnswer;
+
   const extractedDate = extractDate(raw);
   if (extractedDate) return extractedDate;
 
@@ -269,6 +272,23 @@ function deterministicAnswer(query) {
 
   const decimalToBinaryMatch = q.match(/(?:decimal\s+)?(\d+)\s+(?:to|in)\s+binary|convert\s+(\d+)\s+to\s+binary/);
   if (decimalToBinaryMatch && /\bbinary\b/.test(q)) return Number(decimalToBinaryMatch[1] || decimalToBinaryMatch[2]).toString(2);
+
+  return null;
+}
+
+function answerOddEven(q) {
+  const oddMatch = q.match(/\b(?:is\s+)?(-?\d+)\s+(?:an?\s+)?odd(?:\s+number)?\b/);
+  if (oddMatch) return Math.abs(Number(oddMatch[1])) % 2 === 1 ? 'YES' : 'NO';
+
+  const evenMatch = q.match(/\b(?:is\s+)?(-?\d+)\s+(?:an?\s+)?even(?:\s+number)?\b/);
+  if (evenMatch) return Math.abs(Number(evenMatch[1])) % 2 === 0 ? 'YES' : 'NO';
+
+  const parityMatch = q.match(/\b(?:is\s+)?(-?\d+)\s+(?:odd|even)\?/);
+  if (parityMatch) {
+    const asksOdd = /\bodd\b/.test(q);
+    const isOdd = Math.abs(Number(parityMatch[1])) % 2 === 1;
+    return asksOdd === isOdd ? 'YES' : 'NO';
+  }
 
   return null;
 }
