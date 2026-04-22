@@ -115,6 +115,7 @@ async function askGemini(query, assets) {
     process.env.GEMINI_API_KEY ||
     process.env.GOOGLE_API_KEY ||
     process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+    process.env.OPENAI_API_KEY ||
     process.env.API_KEY;
   if (!apiKey || apiKey === 'your_gemini_api_key_here') {
     return null;
