@@ -51,6 +51,9 @@ CRITICAL RULES:
 6. Do NOT include phrases like "Sure!", "Of course!", "Here you go", etc.
 7. Do NOT repeat the question.
 8. Answer as if you are providing the definitive, expected answer.
+9. If the answer is a single name, number, word, or phrase, keep it to one short sentence or just the value.
+10. If asset contents are provided, use the asset text as the source of truth.
+11. Do not use markdown tables, bullet lists, code fences, or headings unless the question explicitly asks for them.
 
 Examples of good answers:
 - Q: "What is 10 + 15?" → "The sum is 25."
@@ -119,6 +122,8 @@ async function fetchAssets(assets) {
 // ============================================
 function localAnswer(query) {
   const q = query.trim().toLowerCase();
+  const fast = deterministicAnswer(query);
+  if (fast) return fast;
 
   // Math operations
   const mathMatch = q.match(/what\s+is\s+(\d+(?:\.\d+)?)\s*([+\-*/×÷]|plus|minus|times|divided\s*by|multiplied\s*by)\s*(\d+(?:\.\d+)?)/i);
@@ -161,6 +166,113 @@ function localAnswer(query) {
   }
 
   return null;
+}
+
+function deterministicAnswer(query) {
+  const raw = String(query || '').trim();
+  const q = raw.toLowerCase();
+
+  const facts = [
+    [/capital of france/, 'The capital of France is Paris.'],
+    [/capital of india/, 'The capital of India is New Delhi.'],
+    [/capital of japan/, 'The capital of Japan is Tokyo.'],
+    [/capital of germany/, 'The capital of Germany is Berlin.'],
+    [/capital of italy/, 'The capital of Italy is Rome.'],
+    [/capital of spain/, 'The capital of Spain is Madrid.'],
+    [/capital of canada/, 'The capital of Canada is Ottawa.'],
+    [/capital of australia/, 'The capital of Australia is Canberra.'],
+    [/largest planet/, 'The largest planet is Jupiter.'],
+    [/red planet/, 'Mars is known as the Red Planet.'],
+    [/chemical symbol for water|formula for water/, 'The chemical formula for water is H2O.'],
+    [/boiling point of water/, 'Water boils at 100 degrees Celsius.'],
+    [/freezing point of water/, 'Water freezes at 0 degrees Celsius.'],
+    [/author of romeo and juliet|wrote romeo and juliet/, 'Romeo and Juliet was written by William Shakespeare.'],
+    [/speed of light/, 'The speed of light is about 299,792,458 meters per second.']
+  ];
+  for (const [pattern, answer] of facts) {
+    if (pattern.test(q)) return answer;
+  }
+
+  const quoted = raw.match(/["'](.+?)["']/)?.[1];
+  if (quoted) {
+    if (/\breverse\b/.test(q)) return quoted.split('').reverse().join('');
+    if (/\buppercase\b|upper case|capital letters/.test(q)) return quoted.toUpperCase();
+    if (/\blowercase\b|lower case/.test(q)) return quoted.toLowerCase();
+    if (/count.*\b(vowels?)\b|\bhow many vowels\b/.test(q)) return String((quoted.match(/[aeiou]/gi) || []).length);
+    if (/count.*\b(characters?|letters?)\b|\bhow many characters\b|\bhow many letters\b/.test(q)) return String(quoted.replace(/\s/g, '').length);
+    if (/count.*\bwords?\b|\bhow many words\b/.test(q)) return String((quoted.trim().match(/\b[\w'-]+\b/g) || []).length);
+    if (/\bpalindrome\b/.test(q)) {
+      const normalized = quoted.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return normalized === normalized.split('').reverse().join('') ? 'Yes.' : 'No.';
+    }
+  }
+
+  const nums = raw.match(/-?\d+(?:\.\d+)?/g)?.map(Number) || [];
+  if (nums.length > 0) {
+    if (/\b(?:largest|max(?:imum)?|highest|greatest)\b/.test(q)) return String(Math.max(...nums));
+    if (/\b(?:smallest|min(?:imum)?|lowest|least)\b/.test(q)) return String(Math.min(...nums));
+    if (/\bsum\b|\btotal\b|\badd\b/.test(q) && nums.length > 1) return `The sum is ${formatNumber(nums.reduce((a, b) => a + b, 0))}.`;
+    if (/\baverage\b|\bmean\b/.test(q) && nums.length > 1) return `The average is ${formatNumber(nums.reduce((a, b) => a + b, 0) / nums.length)}.`;
+    if (/\bsort\b|\border\b/.test(q) && nums.length > 1) {
+      const sorted = [...nums].sort((a, b) => /\bdesc/.test(q) ? b - a : a - b);
+      return sorted.map(formatNumber).join(', ');
+    }
+  }
+
+  const primeMatch = q.match(/(?:is\s+)?(\d+)\s+(?:a\s+)?prime/);
+  if (primeMatch) return isPrime(Number(primeMatch[1])) ? 'Yes.' : 'No.';
+
+  const factorialMatch = q.match(/factorial\s+of\s+(\d+)|(\d+)!/);
+  if (factorialMatch) {
+    const n = Number(factorialMatch[1] || factorialMatch[2]);
+    if (n >= 0 && n <= 20) return `The factorial of ${n} is ${formatNumber(factorial(n))}.`;
+  }
+
+  const fibMatch = q.match(/(?:fibonacci|fib)\s*(?:number)?\s*(?:of|at|for)?\s*(\d+)/);
+  if (fibMatch) {
+    const n = Number(fibMatch[1]);
+    if (n >= 0 && n <= 80) return `The Fibonacci number at position ${n} is ${formatNumber(fibonacci(n))}.`;
+  }
+
+  const binaryMatch = q.match(/binary\s+(?:number\s+)?([01]+)\s+(?:to|in)\s+decimal|convert\s+([01]+)\s+from\s+binary/);
+  if (binaryMatch) return String(parseInt(binaryMatch[1] || binaryMatch[2], 2));
+
+  const decimalToBinaryMatch = q.match(/(?:decimal\s+)?(\d+)\s+(?:to|in)\s+binary|convert\s+(\d+)\s+to\s+binary/);
+  if (decimalToBinaryMatch && /\bbinary\b/.test(q)) return Number(decimalToBinaryMatch[1] || decimalToBinaryMatch[2]).toString(2);
+
+  return null;
+}
+
+function formatNumber(value) {
+  return Number.isInteger(value) ? String(value) : String(parseFloat(value.toFixed(6)));
+}
+
+function isPrime(n) {
+  if (n < 2 || !Number.isInteger(n)) return false;
+  if (n === 2) return true;
+  if (n % 2 === 0) return false;
+  for (let i = 3; i * i <= n; i += 2) {
+    if (n % i === 0) return false;
+  }
+  return true;
+}
+
+function factorial(n) {
+  let result = 1;
+  for (let i = 2; i <= n; i += 1) result *= i;
+  return result;
+}
+
+function fibonacci(n) {
+  if (n <= 1) return n;
+  let a = 0;
+  let b = 1;
+  for (let i = 2; i <= n; i += 1) {
+    const next = a + b;
+    a = b;
+    b = next;
+  }
+  return b;
 }
 
 // ============================================
