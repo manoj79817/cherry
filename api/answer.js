@@ -115,6 +115,9 @@ function localAnswer(query) {
   const raw = String(query || '').trim();
   const q = raw.toLowerCase();
 
+  const ruleChainResult = ruleChainAnswer(raw);
+  if (ruleChainResult !== null) return ruleChainResult;
+
   const namedComparisonAnswer = answerNamedComparison(raw, q);
   if (namedComparisonAnswer) return namedComparisonAnswer;
 
@@ -256,6 +259,135 @@ function localAnswer(query) {
       // fall through
     }
   }
+
+  return null;
+}
+
+function ruleChainAnswer(raw) {
+  const text = String(raw || '').trim();
+  const lower = text.toLowerCase();
+
+  if (!/\brule\s*\d+\s*:/.test(lower)) return null;
+  if (!/\bapply\b/.test(lower) && !/\bin order\b/.test(lower) && !/\binput\b/.test(lower)) return null;
+
+  const input = extractRuleInputNumber(text);
+  if (input === null) return null;
+
+  const blocks = [...text.matchAll(/rule\s*\d+\s*:\s*([\s\S]*?)(?=(?:rule\s*\d+\s*:)|$)/gi)].map(match => match[1].trim()).filter(Boolean);
+  if (!blocks.length) return null;
+
+  let current = input;
+  for (const block of blocks) {
+    const outcome = evaluateRuleBlock(block, current);
+    if (!outcome) continue;
+    if (outcome.type === 'output') return outcome.value;
+    current = outcome.value;
+  }
+
+  return formatNumber(current);
+}
+
+function extractRuleInputNumber(text) {
+  const patterns = [
+    /input number\s+(-?\d+(?:\.\d+)?)/i,
+    /input value\s+(-?\d+(?:\.\d+)?)/i,
+    /starting number\s+(-?\d+(?:\.\d+)?)/i,
+    /initial number\s+(-?\d+(?:\.\d+)?)/i,
+    /input\s+(-?\d+(?:\.\d+)?)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return Number(match[1]);
+  }
+
+  return null;
+}
+
+function evaluateRuleBlock(block, current) {
+  const text = String(block || '');
+  const ifPairs = [...text.matchAll(/if\s+(.+?)(?:\s*->\s*|\s+then\s+)(.+?)(?=(?:\s+if\s+|\s+otherwise\b|$))/gi)];
+
+  for (const pair of ifPairs) {
+    if (evaluateRuleCondition(pair[1], current)) {
+      return applyRuleAction(pair[2], current);
+    }
+  }
+
+  const otherwiseMatch = text.match(/otherwise(?:\s*->\s*|\s+then\s+)(.+)$/i);
+  if (otherwiseMatch) {
+    return applyRuleAction(otherwiseMatch[1], current);
+  }
+
+  return null;
+}
+
+function evaluateRuleCondition(condition, current) {
+  const c = String(condition || '').toLowerCase().replace(/[().,]/g, ' ');
+  const value = Number(current);
+
+  const divMatch = c.match(/divisible by\s+(-?\d+(?:\.\d+)?)/);
+  if (divMatch) return Number(divMatch[1]) !== 0 && value % Number(divMatch[1]) === 0;
+
+  const gtMatch = c.match(/(?:>|greater than)\s*(-?\d+(?:\.\d+)?)/);
+  if (gtMatch) return value > Number(gtMatch[1]);
+
+  const gteMatch = c.match(/(?:>=|at least|greater than or equal to)\s*(-?\d+(?:\.\d+)?)/);
+  if (gteMatch) return value >= Number(gteMatch[1]);
+
+  const ltMatch = c.match(/(?:<|less than)\s*(-?\d+(?:\.\d+)?)/);
+  if (ltMatch) return value < Number(ltMatch[1]);
+
+  const lteMatch = c.match(/(?:<=|at most|less than or equal to)\s*(-?\d+(?:\.\d+)?)/);
+  if (lteMatch) return value <= Number(lteMatch[1]);
+
+  if (/\beven\b/.test(c)) return Number.isInteger(value) && Math.abs(value) % 2 === 0;
+  if (/\bodd\b/.test(c)) return Number.isInteger(value) && Math.abs(value) % 2 === 1;
+
+  return false;
+}
+
+function applyRuleAction(action, current) {
+  const text = String(action || '').trim();
+  const lower = text.toLowerCase();
+
+  const quoted = text.match(/["']([^"']+)["']/)?.[1];
+  if (quoted !== undefined) {
+    if (/\boutput\b|\breturn\b|\bresult\b/.test(lower)) return { type: 'output', value: quoted };
+  }
+
+  if (/\boutput the number\b|\boutput number\b|\boutput the result\b|\boutput result\b|\breturn the number\b|\breturn the result\b/.test(lower)) {
+    return { type: 'output', value: formatNumber(current) };
+  }
+
+  const directOutput = lower.match(/\boutput\s+([a-z][a-z0-9_-]*)\b/);
+  if (directOutput && !/\bthe\b/.test(lower)) {
+    return { type: 'output', value: directOutput[1].toUpperCase() === directOutput[1] ? directOutput[1] : directOutput[1].toUpperCase() };
+  }
+
+  if (/\bdouble\b/.test(lower)) return { type: 'value', value: current * 2 };
+  if (/\btriple\b/.test(lower)) return { type: 'value', value: current * 3 };
+  if (/\bhalf\b|\bhalve\b/.test(lower)) return { type: 'value', value: current / 2 };
+  if (/\bsquare\b/.test(lower)) return { type: 'value', value: current * current };
+  if (/\bcube\b/.test(lower)) return { type: 'value', value: current * current * current };
+
+  const addMatch = lower.match(/\badd\s+(-?\d+(?:\.\d+)?)|\bincrease by\s+(-?\d+(?:\.\d+)?)|\bplus\s+(-?\d+(?:\.\d+)?)/);
+  if (addMatch) {
+    const n = Number(addMatch[1] || addMatch[2] || addMatch[3]);
+    return { type: 'value', value: current + n };
+  }
+
+  const subtractMatch = lower.match(/\bsubtract\s+(-?\d+(?:\.\d+)?)|\bdecrease by\s+(-?\d+(?:\.\d+)?)|\bminus\s+(-?\d+(?:\.\d+)?)/);
+  if (subtractMatch) {
+    const n = Number(subtractMatch[1] || subtractMatch[2] || subtractMatch[3]);
+    return { type: 'value', value: current - n };
+  }
+
+  const multiplyMatch = lower.match(/\bmultiply by\s+(-?\d+(?:\.\d+)?)/);
+  if (multiplyMatch) return { type: 'value', value: current * Number(multiplyMatch[1]) };
+
+  const divideMatch = lower.match(/\bdivide by\s+(-?\d+(?:\.\d+)?)/);
+  if (divideMatch) return { type: 'value', value: current / Number(divideMatch[1]) };
 
   return null;
 }
