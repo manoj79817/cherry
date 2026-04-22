@@ -181,6 +181,9 @@ function deterministicAnswer(query) {
   const raw = String(query || '').trim();
   const q = raw.toLowerCase();
 
+  const namedComparisonAnswer = answerNamedComparison(raw, q);
+  if (namedComparisonAnswer) return namedComparisonAnswer;
+
   const filteredNumberAnswer = answerFilteredNumbers(raw);
   if (filteredNumberAnswer !== null) return filteredNumberAnswer;
 
@@ -277,6 +280,38 @@ function deterministicAnswer(query) {
   if (decimalToBinaryMatch && /\bbinary\b/.test(q)) return Number(decimalToBinaryMatch[1] || decimalToBinaryMatch[2]).toString(2);
 
   return null;
+}
+
+function answerNamedComparison(raw, q) {
+  const text = String(raw || '');
+  const lowerQuery = String(q || '').toLowerCase();
+  const wantsMax = /\b(highest|highest score|most|largest|greatest|max(?:imum)?|top|best|winner|won)\b/.test(lowerQuery);
+  const wantsMin = /\b(lowest|least|smallest|min(?:imum)?|fewest|worst)\b/.test(lowerQuery);
+
+  if (!wantsMax && !wantsMin) return null;
+
+  const patterns = [
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:scored|got|earned|received|made|has|had|was|is|with)\s+(-?\d+(?:\.\d+)?)/g,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:points?|marks?|votes?)\s*(?:of|:)?\s*(-?\d+(?:\.\d+)?)/g,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*[:=-]?\s*(-?\d+(?:\.\d+)?)/g
+  ];
+
+  const pairs = [];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      pairs.push({ name: match[1].trim(), value: Number(match[2]) });
+    }
+  }
+
+  if (!pairs.length) return null;
+
+  const best = pairs.reduce((selected, current) => {
+    if (!selected) return current;
+    if (wantsMax) return current.value > selected.value ? current : selected;
+    return current.value < selected.value ? current : selected;
+  }, null);
+
+  return best ? best.name : null;
 }
 
 function answerFilteredNumbers(raw) {

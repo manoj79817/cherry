@@ -1,12 +1,20 @@
 /**
- * Vercel Serverless Function — /api/answer
- * Accepts POST { query, assets } → Returns { output }
+ * Vercel Serverless Function - /api/answer
+ * Accepts POST { query, assets } -> Returns { output }
  */
 
+const GEMINI_API_KEY =
+  process.env.GEMINI_API_KEY ||
+  process.env.GOOGLE_API_KEY ||
+  process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+  process.env.OPENAI_API_KEY ||
+  process.env.API_KEY;
+
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+
 module.exports = async (req, res) => {
-  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS, GET');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
@@ -15,9 +23,9 @@ module.exports = async (req, res) => {
 
   if (req.method === 'GET') {
     return res.status(200).json({
-      name: 'ARIA API - Team Ben10',
-      version: '2.0',
-      status: 'online'
+      name: 'Cherry API',
+      status: 'online',
+      endpoint: '/api/answer'
     });
   }
 
@@ -25,49 +33,193 @@ module.exports = async (req, res) => {
     return res.status(405).json({ output: 'Method not allowed' });
   }
 
-  const { query, assets } = req.body || {};
+  const body = req.body || {};
+  const query = resolveQuery(body);
+  const assets = normalizeAssets(body.assets || body.asset || body.urls || body.files || []);
 
   if (!query) {
     return res.status(400).json({ output: 'No query provided.' });
   }
 
   try {
-    // Try local fast answer first
-    const localResult = localAnswer(query);
-    if (localResult) {
-      return res.json({ output: localResult });
+    if (assets.length > 0) {
+      const assetContents = await fetchAssets(assets);
+      const assetAnswer = answerFromAssets(query, assetContents);
+      if (assetAnswer) {
+        return res.json({ output: assetAnswer });
+      }
     }
 
-    // Try Gemini if key is available
+    const localAnswerValue = localAnswer(query);
+    if (localAnswerValue) {
+      return res.json({ output: localAnswerValue });
+    }
+
     const aiAnswer = await askGemini(query, assets);
     if (aiAnswer) {
       return res.json({ output: aiAnswer });
     }
 
-    // Fallback
-    return res.json({ output: `I cannot determine the answer to: "${query}"` });
+    return res.json({ output: 'I cannot determine the answer.' });
   } catch (error) {
-    console.error('Error:', error.message);
-    return res.json({ output: `Error processing: ${query}` });
+    return res.json({ output: `Error processing query: ${query}` });
   }
 };
 
-// ============================================
-// Local Answer Engine
-// ============================================
-function localAnswer(query) {
-  const q = query.trim();
-  const ql = q.toLowerCase();
+function resolveQuery(body) {
+  const value =
+    body.query ??
+    body.question ??
+    body.prompt ??
+    body.input ??
+    body.message ??
+    body.text ??
+    body.q;
 
-  // Math: "What is X + Y?"
-  const mathMatch = ql.match(
-    /what\s+is\s+(\-?\d+(?:\.\d+)?)\s*([+\-*/×÷]|plus|minus|times|divided\s*by|multiplied\s*by)\s*(\-?\d+(?:\.\d+)?)/i
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  return String(value);
+}
+
+function normalizeAssets(assets) {
+  const list = Array.isArray(assets) ? assets : [assets];
+  return list
+    .map(asset => {
+      if (typeof asset === 'string') return asset;
+      return asset?.url || asset?.href || asset?.src || asset?.link || asset?.content || asset?.text || asset?.data || '';
+    })
+    .filter(Boolean);
+}
+
+async function fetchAssets(assets) {
+  const results = await Promise.allSettled(
+    assets.map(async asset => {
+      if (!/^https?:\/\//i.test(asset)) return asset;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await fetch(asset, { signal: controller.signal });
+        return await response.text();
+      } finally {
+        clearTimeout(timeout);
+      }
+    })
   );
+
+  return results
+    .filter(result => result.status === 'fulfilled')
+    .map(result => String(result.value || ''));
+}
+
+function localAnswer(query) {
+  const raw = String(query || '').trim();
+  const q = raw.toLowerCase();
+
+  const namedComparisonAnswer = answerNamedComparison(raw, q);
+  if (namedComparisonAnswer) return namedComparisonAnswer;
+
+  const filteredNumberAnswer = answerFilteredNumbers(raw);
+  if (filteredNumberAnswer !== null) return filteredNumberAnswer;
+
+  const oddEvenAnswer = answerOddEven(q, raw);
+  if (oddEvenAnswer) return oddEvenAnswer;
+
+  const extractedDate = extractDate(raw);
+  if (extractedDate) return extractedDate;
+
+  const facts = [
+    [/capital of france/, 'The capital of France is Paris.'],
+    [/capital of india/, 'The capital of India is New Delhi.'],
+    [/capital of japan/, 'The capital of Japan is Tokyo.'],
+    [/capital of germany/, 'The capital of Germany is Berlin.'],
+    [/capital of italy/, 'The capital of Italy is Rome.'],
+    [/capital of spain/, 'The capital of Spain is Madrid.'],
+    [/capital of canada/, 'The capital of Canada is Ottawa.'],
+    [/capital of australia/, 'The capital of Australia is Canberra.'],
+    [/largest planet/, 'The largest planet is Jupiter.'],
+    [/red planet/, 'Mars is known as the Red Planet.'],
+    [/chemical symbol for water|formula for water/, 'The chemical formula for water is H2O.'],
+    [/boiling point of water/, 'Water boils at 100 degrees Celsius.'],
+    [/freezing point of water/, 'Water freezes at 0 degrees Celsius.'],
+    [/author of romeo and juliet|wrote romeo and juliet/, 'Romeo and Juliet was written by William Shakespeare.'],
+    [/speed of light/, 'The speed of light is about 299,792,458 meters per second.']
+  ];
+  for (const [pattern, answer] of facts) {
+    if (pattern.test(q)) return answer;
+  }
+
+  const sqrtMatch = q.match(/square root of\s+(\d+(?:\.\d+)?)/);
+  if (sqrtMatch) return formatNumber(Math.sqrt(Number(sqrtMatch[1])));
+
+  const squareMatch = q.match(/(?:what is )?(-?\d+(?:\.\d+)?)\s+squared|square of\s+(-?\d+(?:\.\d+)?)/);
+  if (squareMatch) {
+    const n = Number(squareMatch[1] || squareMatch[2]);
+    return formatNumber(n * n);
+  }
+
+  const cubeMatch = q.match(/(?:what is )?(-?\d+(?:\.\d+)?)\s+cubed|cube of\s+(-?\d+(?:\.\d+)?)/);
+  if (cubeMatch) {
+    const n = Number(cubeMatch[1] || cubeMatch[2]);
+    return formatNumber(n * n * n);
+  }
+
+  const percentMatch = q.match(/(?:what is )?(-?\d+(?:\.\d+)?)\s*%\s+of\s+(-?\d+(?:\.\d+)?)/);
+  if (percentMatch) return formatNumber((Number(percentMatch[1]) / 100) * Number(percentMatch[2]));
+
+  const quoted = raw.match(/["'](.+?)["']/)?.[1];
+  if (quoted) {
+    if (/\breverse\b/.test(q)) return quoted.split('').reverse().join('');
+    if (/\buppercase\b|upper case|capital letters/.test(q)) return quoted.toUpperCase();
+    if (/\blowercase\b|lower case/.test(q)) return quoted.toLowerCase();
+    if (/count.*\b(vowels?)\b|\bhow many vowels\b/.test(q)) return String((quoted.match(/[aeiou]/gi) || []).length);
+    if (/count.*\b(characters?|letters?)\b|\bhow many characters\b|\bhow many letters\b/.test(q)) return String(quoted.replace(/\s/g, '').length);
+    if (/count.*\bwords?\b|\bhow many words\b/.test(q)) return String((quoted.trim().match(/\b[\w'-]+\b/g) || []).length);
+    if (/\bpalindrome\b/.test(q)) {
+      const normalized = quoted.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return normalized === normalized.split('').reverse().join('') ? 'Yes.' : 'No.';
+    }
+  }
+
+  const nums = raw.match(/-?\d+(?:\.\d+)?/g)?.map(Number) || [];
+  if (nums.length > 0) {
+    if (/\b(?:largest|max(?:imum)?|highest|greatest)\b/.test(q)) return String(Math.max(...nums));
+    if (/\b(?:smallest|min(?:imum)?|lowest|least)\b/.test(q)) return String(Math.min(...nums));
+    if (/\bsum\b|\btotal\b|\badd\b/.test(q) && nums.length > 1) return `The sum is ${formatNumber(nums.reduce((a, b) => a + b, 0))}.`;
+    if (/\baverage\b|\bmean\b/.test(q) && nums.length > 1) return `The average is ${formatNumber(nums.reduce((a, b) => a + b, 0) / nums.length)}.`;
+    if (/\bsort\b|\border\b/.test(q) && nums.length > 1) {
+      const sorted = [...nums].sort((a, b) => /\bdesc/.test(q) ? b - a : a - b);
+      return sorted.map(formatNumber).join(', ');
+    }
+  }
+
+  const primeMatch = q.match(/(?:is\s+)?(\d+)\s+(?:a\s+)?prime/);
+  if (primeMatch) return isPrime(Number(primeMatch[1])) ? 'Yes.' : 'No.';
+
+  const factorialMatch = q.match(/factorial\s+of\s+(\d+)|(\d+)!/);
+  if (factorialMatch) {
+    const n = Number(factorialMatch[1] || factorialMatch[2]);
+    if (n >= 0 && n <= 20) return `The factorial of ${n} is ${formatNumber(factorial(n))}.`;
+  }
+
+  const fibMatch = q.match(/(?:fibonacci|fib)\s*(?:number)?\s*(?:of|at|for)?\s*(\d+)/);
+  if (fibMatch) {
+    const n = Number(fibMatch[1]);
+    if (n >= 0 && n <= 80) return `The Fibonacci number at position ${n} is ${formatNumber(fibonacci(n))}.`;
+  }
+
+  const binaryMatch = q.match(/binary\s+(?:number\s+)?([01]+)\s+(?:to|in)\s+decimal|convert\s+([01]+)\s+from\s+binary/);
+  if (binaryMatch) return String(parseInt(binaryMatch[1] || binaryMatch[2], 2));
+
+  const decimalToBinaryMatch = q.match(/(?:decimal\s+)?(\d+)\s+(?:to|in)\s+binary|convert\s+(\d+)\s+to\s+binary/);
+  if (decimalToBinaryMatch && /\bbinary\b/.test(q)) return Number(decimalToBinaryMatch[1] || decimalToBinaryMatch[2]).toString(2);
+
+  const mathMatch = q.match(/what\s+is\s+(\d+(?:\.\d+)?)\s*([+\-*/×÷]|plus|minus|times|divided\s*by|multiplied\s*by)\s*(\d+(?:\.\d+)?)/i);
   if (mathMatch) {
     const a = parseFloat(mathMatch[1]);
     const opStr = mathMatch[2].toLowerCase();
     const b = parseFloat(mathMatch[3]);
-    let result, opWord;
+    let result;
+    let opWord;
 
     if (opStr === '+' || opStr === 'plus') {
       result = a + b;
@@ -89,11 +241,10 @@ function localAnswer(query) {
     }
   }
 
-  // Generic arithmetic evaluation
-  const calcMatch = ql.match(/(?:calculate|compute|evaluate|solve|what\s+is)\s+(.+)/i);
-  if (calcMatch) {
+  const exprMatch = q.match(/(?:calculate|compute|evaluate|solve|what\s+is)\s+(.+)/i);
+  if (exprMatch) {
     try {
-      const expr = calcMatch[1].replace(/[^0-9+\-*/().%\s]/g, '').trim();
+      const expr = exprMatch[1].replace(/[^0-9+\-*/().%\s]/g, '').trim();
       if (expr && /^[\d+\-*/().%\s]+$/.test(expr)) {
         const result = Function('"use strict"; return (' + expr + ')')();
         if (typeof result === 'number' && isFinite(result)) {
@@ -101,62 +252,323 @@ function localAnswer(query) {
           return `The result is ${formatted}.`;
         }
       }
-    } catch (e) { /* fall through */ }
+    } catch (error) {
+      // fall through
+    }
   }
 
   return null;
 }
 
-// ============================================
-// Gemini Integration (optional)
-// ============================================
-async function askGemini(query, assets) {
-  const apiKey =
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.API_KEY;
-  if (!apiKey || apiKey === 'your_gemini_api_key_here') {
-    return null;
+function answerNamedComparison(raw, q) {
+  const text = String(raw || '');
+  const wantsMax = /\b(highest|highest score|most|largest|greatest|max(?:imum)?|top|best|winner|won)\b/.test(q);
+  const wantsMin = /\b(lowest|least|smallest|min(?:imum)?|fewest|worst)\b/.test(q);
+
+  if (!wantsMax && !wantsMin) return null;
+
+  const patterns = [
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:scored|got|earned|received|made|has|had|was|is|with)\s+(-?\d+(?:\.\d+)?)/g,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:points?|marks?|votes?)\s*(?:of|:)?\s*(-?\d+(?:\.\d+)?)/g,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*[:=-]?\s*(-?\d+(?:\.\d+)?)/g
+  ];
+
+  const pairs = [];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      pairs.push({ name: match[1].trim(), value: Number(match[2]) });
+    }
   }
 
+  if (!pairs.length) return null;
+
+  const best = pairs.reduce((selected, current) => {
+    if (!selected) return current;
+    if (wantsMax) return current.value > selected.value ? current : selected;
+    return current.value < selected.value ? current : selected;
+  }, null);
+
+  return best ? best.name : null;
+}
+
+function answerFilteredNumbers(raw) {
+  const q = String(raw || '').toLowerCase();
+  if (!/\b(sum|total|add|count|how many|average|mean|product|multiply|largest|smallest|maximum|minimum|max|min)\b/.test(q)) return null;
+  if (!/\b(even|evens|odd|odds|positive|negative|prime|divisible|multiple|multiples|greater|less|above|below|numbers?|integers?|values?)\b/.test(q)) return null;
+
+  const nums = extractListNumbers(raw);
+  if (nums.length === 0) return null;
+
+  let selected = nums;
+  if (/\bevens?\b/.test(q)) selected = selected.filter(n => Number.isInteger(n) && Math.abs(n) % 2 === 0);
+  if (/\bodds?\b/.test(q)) selected = selected.filter(n => Number.isInteger(n) && Math.abs(n) % 2 === 1);
+  if (/\bpositive\b/.test(q)) selected = selected.filter(n => n > 0);
+  if (/\bnegative\b/.test(q)) selected = selected.filter(n => n < 0);
+  if (/\bprime\b/.test(q)) selected = selected.filter(n => isPrime(Math.abs(n)));
+
+  const divisibleMatch = q.match(/divisible by\s+(-?\d+)|multiples? of\s+(-?\d+)/);
+  if (divisibleMatch) {
+    const divisor = Math.abs(Number(divisibleMatch[1] || divisibleMatch[2]));
+    if (divisor !== 0) selected = selected.filter(n => Number.isInteger(n) && n % divisor === 0);
+  }
+
+  const greaterMatch = q.match(/(?:greater than|more than|above)\s+(-?\d+(?:\.\d+)?)/);
+  if (greaterMatch) selected = selected.filter(n => n > Number(greaterMatch[1]));
+
+  const lessMatch = q.match(/(?:less than|below|under)\s+(-?\d+(?:\.\d+)?)/);
+  if (lessMatch) selected = selected.filter(n => n < Number(lessMatch[1]));
+
+  const atLeastMatch = q.match(/(?:at least|greater than or equal to)\s+(-?\d+(?:\.\d+)?)/);
+  if (atLeastMatch) selected = selected.filter(n => n >= Number(atLeastMatch[1]));
+
+  const atMostMatch = q.match(/(?:at most|less than or equal to)\s+(-?\d+(?:\.\d+)?)/);
+  if (atMostMatch) selected = selected.filter(n => n <= Number(atMostMatch[1]));
+
+  if (/\bcount\b|\bhow many\b/.test(q)) return String(selected.length);
+  if (/\b(?:largest|maximum|max|highest)\b/.test(q)) return selected.length ? formatNumber(Math.max(...selected)) : '0';
+  if (/\b(?:smallest|minimum|min|lowest)\b/.test(q)) return selected.length ? formatNumber(Math.min(...selected)) : '0';
+  if (/\baverage\b|\bmean\b/.test(q)) {
+    if (selected.length === 0) return '0';
+    return formatNumber(selected.reduce((a, b) => a + b, 0) / selected.length);
+  }
+  if (/\bproduct\b|\bmultiply\b/.test(q)) {
+    if (selected.length === 0) return '0';
+    return formatNumber(selected.reduce((a, b) => a * b, 1));
+  }
+  if (/\bsum\b|\btotal\b|\badd\b/.test(q)) {
+    return formatNumber(selected.reduce((a, b) => a + b, 0));
+  }
+
+  return null;
+}
+
+function extractListNumbers(raw) {
+  const text = String(raw || '');
+  const listMatch = text.match(/(?:numbers?|integers?|values?|list|array)\s*[:=]\s*([^.;\n]+)/i);
+  if (listMatch) {
+    const parsed = extractNumbers(listMatch[1]);
+    if (parsed.length) return parsed;
+  }
+
+  const bracketMatch = text.match(/\[([^\]]+)\]|\(([^\)]+)\)/);
+  if (bracketMatch) {
+    const parsed = extractNumbers(bracketMatch[1] || bracketMatch[2]);
+    if (parsed.length) return parsed;
+  }
+
+  return extractNumbers(raw);
+}
+
+function extractNumbers(raw) {
+  const explicit = String(raw || '').match(/(?:minus|negative)?\s*-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/gi);
+  if (explicit?.length) {
+    return explicit.map(value => {
+      const isNegative = /\b(minus|negative)\b/i.test(value);
+      const parsed = Number(value.replace(/\b(minus|negative)\b/gi, '').replace(/,/g, '').trim());
+      return isNegative ? -Math.abs(parsed) : parsed;
+    });
+  }
+
+  const words = String(raw || '').toLowerCase().match(/\b(?:minus |negative )?(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and|-|\s)+\b/g) || [];
+  return words
+    .map(segment => parseNumberWords(segment))
+    .filter(value => value !== null);
+}
+
+function answerOddEven(q, raw) {
+  if (!/\b(odd|even|parity|divisible by 2|multiple of 2)\b/.test(q)) return null;
+
+  const asksOdd = /\bodd\b/.test(q);
+  const asksEven = /\beven\b|\bdivisible by 2\b|\bmultiple of 2\b/.test(q);
+  const value = extractParityValue(q, raw);
+  if (value === null) return null;
+
+  const isOddValue = Math.abs(value) % 2 === 1;
+  if (asksOdd) return isOddValue ? 'YES' : 'NO';
+  if (asksEven) return !isOddValue ? 'YES' : 'NO';
+  return isOddValue ? 'ODD' : 'EVEN';
+}
+
+function extractParityValue(q, raw) {
+  const expr = parseSimpleExpression(q);
+  if (expr !== null) return expr;
+
+  const digitMatch = q.match(/(?:minus|negative)?\s*-?\d[\d,]*/);
+  if (digitMatch) {
+    const isNegative = /\b(minus|negative)\b/.test(digitMatch[0]);
+    const value = Number(digitMatch[0].replace(/\b(minus|negative)\b/g, '').replace(/,/g, '').trim());
+    return isNegative ? -Math.abs(value) : value;
+  }
+
+  const wordNumber = parseNumberWords(raw);
+  if (wordNumber !== null) return wordNumber;
+
+  return null;
+}
+
+function parseSimpleExpression(q) {
+  const normalized = normalizeNumberWordsForMath(q)
+    .replace(/,/g, '')
+    .replace(/\bplus\b|\badded to\b/g, '+')
+    .replace(/\bminus\b|\bsubtracted by\b/g, '-')
+    .replace(/\btimes\b|\bmultiplied by\b|\bmultiplied with\b/g, '*')
+    .replace(/\bdivided by\b/g, '/');
+
+  const patterns = [
+    { re: /sum of (-?\d+) and (-?\d+)/, fn: (a, b) => a + b },
+    { re: /add (-?\d+) and (-?\d+)/, fn: (a, b) => a + b },
+    { re: /(-?\d+) plus (-?\d+)/, fn: (a, b) => a + b },
+    { re: /(-?\d+)\s*\+\s*(-?\d+)/, fn: (a, b) => a + b },
+    { re: /difference between (-?\d+) and (-?\d+)/, fn: (a, b) => a - b },
+    { re: /(-?\d+)\s*-\s*(-?\d+)/, fn: (a, b) => a - b },
+    { re: /product of (-?\d+) and (-?\d+)/, fn: (a, b) => a * b },
+    { re: /multiply (-?\d+) and (-?\d+)/, fn: (a, b) => a * b },
+    { re: /(-?\d+)\s*(?:x|\*)\s*(-?\d+)/, fn: (a, b) => a * b },
+    { re: /(-?\d+)\s*\/\s*(-?\d+)/, fn: (a, b) => (b === 0 ? null : a / b) }
+  ];
+
+  for (const { re, fn } of patterns) {
+    const match = normalized.match(re);
+    if (match) {
+      const value = fn(Number(match[1]), Number(match[2]));
+      return Number.isInteger(value) ? value : null;
+    }
+  }
+
+  const squareMatch = normalized.match(/(?:square of (-?\d+)|(-?\d+) squared)/);
+  if (squareMatch) {
+    const n = Number(squareMatch[1] || squareMatch[2]);
+    return n * n;
+  }
+
+  const cubeMatch = normalized.match(/(?:cube of (-?\d+)|(-?\d+) cubed)/);
+  if (cubeMatch) {
+    const n = Number(cubeMatch[1] || cubeMatch[2]);
+    return n * n * n;
+  }
+
+  return null;
+}
+
+function parseNumberWords(text) {
+  const normalized = String(text || '').toLowerCase().replace(/-/g, ' ').replace(/\band\b/g, ' ');
+  const units = {
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+    seventeen: 17, eighteen: 18, nineteen: 19
+  };
+  const tens = {
+    twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90
+  };
+  const tokens = normalized.match(/\b(minus|negative|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b/g);
+  if (!tokens) return null;
+
+  let total = 0;
+  let current = 0;
+  let sign = 1;
+  let sawNumber = false;
+
+  for (const token of tokens) {
+    if (token === 'minus' || token === 'negative') {
+      sign = -1;
+    } else if (token in units) {
+      current += units[token];
+      sawNumber = true;
+    } else if (token in tens) {
+      current += tens[token];
+      sawNumber = true;
+    } else if (token === 'hundred') {
+      current = (current || 1) * 100;
+      sawNumber = true;
+    } else if (token === 'thousand') {
+      total += (current || 1) * 1000;
+      current = 0;
+      sawNumber = true;
+    }
+  }
+
+  return sawNumber ? sign * (total + current) : null;
+}
+
+function normalizeNumberWordsForMath(text) {
+  return text.replace(/\b(?:minus |negative )?(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and|-|\s)+\b/gi, segment => {
+    const parsed = parseNumberWords(segment);
+    return parsed === null ? segment : String(parsed);
+  });
+}
+
+function extractDate(input) {
+  const text = String(input || '');
+  const months = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)';
+  const monthNames = {
+    jan: 'January', january: 'January',
+    feb: 'February', february: 'February',
+    mar: 'March', march: 'March',
+    apr: 'April', april: 'April',
+    may: 'May',
+    jun: 'June', june: 'June',
+    jul: 'July', july: 'July',
+    aug: 'August', august: 'August',
+    sep: 'September', sept: 'September', september: 'September',
+    oct: 'October', october: 'October',
+    nov: 'November', november: 'November',
+    dec: 'December', december: 'December'
+  };
+
+  const ordinal = '(?:st|nd|rd|th)?';
+  const day = '(?:[0-2]?\\d|3[01])';
+  const year = '(?:\\d{4})';
+
+  let match = text.match(new RegExp(`\\b(${day})${ordinal}\\s+(${months})\\s*,?\\s*(${year})\\b`, 'i'));
+  if (match) return `${Number(match[1])} ${normalizeMonth(match[2], monthNames)} ${match[3]}`;
+
+  match = text.match(new RegExp(`\\b(${months})\\s+(${day})${ordinal}\\s*,?\\s*(${year})\\b`, 'i'));
+  if (match) return `${normalizeMonth(match[1], monthNames)} ${Number(match[2])}, ${match[3]}`;
+
+  match = text.match(new RegExp(`\\b(${day})${ordinal}\\s+of\\s+(${months})\\s*,?\\s*(${year})\\b`, 'i'));
+  if (match) return `${Number(match[1])} ${normalizeMonth(match[2], monthNames)} ${match[3]}`;
+
+  match = text.match(new RegExp(`\\b(${day})${ordinal}\\s+(${months})\\b`, 'i'));
+  if (match) return `${Number(match[1])} ${normalizeMonth(match[2], monthNames)}`;
+
+  match = text.match(new RegExp(`\\b(${months})\\s+(${day})${ordinal}\\b`, 'i'));
+  if (match) return `${normalizeMonth(match[1], monthNames)} ${Number(match[2])}`;
+
+  match = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (match) return `${match[1]}-${pad2(match[2])}-${pad2(match[3])}`;
+
+  match = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
+  if (match) return `${pad2(match[1])}/${pad2(match[2])}/${match[3]}`;
+
+  match = text.match(/\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b/);
+  if (match) return `${match[1]}/${pad2(match[2])}/${pad2(match[3])}`;
+
+  match = text.match(/\b(?:today|tomorrow|yesterday)\b/i);
+  if (match) return match[0].toLowerCase();
+
+  return null;
+}
+
+async function askGemini(query, assets) {
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') return null;
+
   try {
-    const systemPrompt = `You are a precise question-answering assistant. Your answers are compared against expected outputs using cosine similarity and Jaccard scoring.
-
-RULES:
-1. Give DIRECT, CONCISE answers only.
-2. For math: state the answer in a clean sentence like "The sum is 25."
-3. No filler words like "Sure!", "Of course!", "Here you go".
-4. Do NOT repeat the question.
-5. Match the expected natural language answer format.`;
-
-    // Fetch asset contents if provided
     let assetText = '';
     if (assets && assets.length > 0) {
-      const fetched = await Promise.allSettled(
-        assets.map(url =>
-          fetch(url, { signal: AbortSignal.timeout(5000) })
-            .then(r => r.text())
-        )
-      );
-      const contents = fetched
-        .filter(r => r.status === 'fulfilled')
-        .map((r, i) => `--- Asset ${i + 1} ---\n${r.value}`);
-      if (contents.length) {
-        assetText = '\n\nAsset Contents:\n' + contents.join('\n');
+      const fetched = await fetchAssets(assets);
+      if (fetched.length) {
+        assetText = '\n\nAsset Contents:\n' + fetched.map((content, index) => `--- Asset ${index + 1} ---\n${content}`).join('\n');
       }
     }
 
-    const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         systemInstruction: {
-          parts: [{ text: systemPrompt }]
+          parts: [{ text: 'Return only the answer. Keep it concise and direct.' }]
         },
         contents: [
           {
@@ -166,19 +578,95 @@ RULES:
         ],
         generationConfig: {
           temperature: 0,
-          maxOutputTokens: 1024
+          maxOutputTokens: 256
         }
-      }),
-      signal: AbortSignal.timeout(12000)
+      })
     });
 
     const data = await response.json();
-    return data.candidates?.[0]?.content?.parts
-      ?.map(part => part.text || '')
-      .join('')
-      .trim() || null;
+    return data.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim() || null;
   } catch (error) {
-    console.error('Gemini Error:', error.message);
     return null;
   }
+}
+
+function answerFromAssets(query, assetContents = []) {
+  if (!assetContents.length) return null;
+
+  const q = String(query || '').toLowerCase();
+  const text = assetContents.join('\n').replace(/\s+/g, ' ').trim();
+  const lower = text.toLowerCase();
+
+  const colors = ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'black', 'white', 'gray', 'grey', 'pink', 'brown'];
+  if (/\bcolor\b|\bcolour\b/.test(q)) {
+    const color = colors.find(c => new RegExp(`\\b${c}\\b`, 'i').test(text));
+    if (color) return color;
+  }
+
+  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (/\bemail\b/.test(q) && emailMatch) return emailMatch[0];
+
+  const phoneMatch = text.match(/\+?\d[\d\s().-]{7,}\d/);
+  if (/\bphone\b|\bmobile\b|\bcontact\b/.test(q) && phoneMatch) return phoneMatch[0].trim();
+
+  const urlMatch = text.match(/https?:\/\/[^\s)]+/i);
+  if (/\burl\b|\blink\b|\bwebsite\b/.test(q) && urlMatch) return urlMatch[0];
+
+  if (/\bfirst sentence\b/.test(q)) {
+    const sentence = text.match(/[^.!?]+[.!?]/)?.[0]?.trim();
+    if (sentence) return sentence;
+  }
+
+  if (/\blast sentence\b/.test(q)) {
+    const sentences = text.match(/[^.!?]+[.!?]/g);
+    if (sentences?.length) return sentences[sentences.length - 1].trim();
+  }
+
+  const capitalMatch = q.match(/capital of ([a-z ]+)/);
+  if (capitalMatch && lower.includes(capitalMatch[1].trim())) {
+    const sentence = text.match(new RegExp(`[^.!?]*${capitalMatch[1].trim()}[^.!?]*[.!?]`, 'i'))?.[0];
+    if (sentence) return sentence.trim();
+  }
+
+  return null;
+}
+
+function normalizeMonth(month, monthNames) {
+  return monthNames[String(month).toLowerCase().replace('.', '')] || month;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function formatNumber(value) {
+  return Number.isInteger(value) ? String(value) : String(parseFloat(value.toFixed(6)));
+}
+
+function isPrime(n) {
+  if (n < 2 || !Number.isInteger(n)) return false;
+  if (n === 2) return true;
+  if (n % 2 === 0) return false;
+  for (let i = 3; i * i <= n; i += 2) {
+    if (n % i === 0) return false;
+  }
+  return true;
+}
+
+function factorial(n) {
+  let result = 1;
+  for (let i = 2; i <= n; i += 1) result *= i;
+  return result;
+}
+
+function fibonacci(n) {
+  if (n <= 1) return n;
+  let a = 0;
+  let b = 1;
+  for (let i = 2; i <= n; i += 1) {
+    const next = a + b;
+    a = b;
+    b = next;
+  }
+  return b;
 }
