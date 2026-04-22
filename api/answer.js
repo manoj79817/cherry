@@ -267,8 +267,8 @@ function ruleChainAnswer(raw) {
   const text = String(raw || '').trim();
   const lower = text.toLowerCase();
 
-  if (!/\brule\s*\d+\s*:/.test(lower)) return null;
-  if (!/\bapply\b/.test(lower) && !/\bin order\b/.test(lower) && !/\binput\b/.test(lower)) return null;
+  const hasRules = /\brule\s*\d+\s*:/.test(lower) || (/\bif\b/.test(lower) && (/\bthen\b/.test(lower) || /->|=>|:|,/.test(text)));
+  if (!hasRules) return null;
 
   const input = extractRuleInputNumber(text);
   if (input === null) return null;
@@ -288,7 +288,17 @@ function ruleChainAnswer(raw) {
 }
 
 function extractRuleInputNumber(text) {
+  const lower = String(text || '').toLowerCase();
+  const firstRuleIndex = lower.search(/\brule\s*\d+\s*:/);
+  const intro = firstRuleIndex >= 0 ? text.slice(0, firstRuleIndex) : text;
+
   const patterns = [
+    /(?:input|starting|initial|given|start|begin)\s+with\s+(-?\d+(?:\.\d+)?)/i,
+    /(?:input|starting|initial|given|start|begin)\s+with\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
+    /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s*:\s*(-?\d+(?:\.\d+)?)/i,
+    /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s+(-?\d+(?:\.\d+)?)/i,
+    /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s*:\s*([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
+    /(?:input|starting|initial|given|start|begin)\s+(?:number|value)?\s+([a-z-]+\b(?:\s+[a-z-]+\b)*)/i,
     /input number\s+(-?\d+(?:\.\d+)?)/i,
     /input number\s*:\s*(-?\d+(?:\.\d+)?)/i,
     /given input\s+(-?\d+(?:\.\d+)?)/i,
@@ -301,16 +311,23 @@ function extractRuleInputNumber(text) {
   ];
 
   for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) return Number(match[1]);
+    const match = intro.match(pattern) || text.match(pattern);
+    if (match) {
+      if (/^-?\d+(?:\.\d+)?$/.test(match[1])) return Number(match[1]);
+      const parsed = parseNumberWords(match[1]);
+      if (parsed !== null) return parsed;
+    }
   }
+
+  const wordNumber = parseNumberWords(intro) ?? parseNumberWords(text);
+  if (wordNumber !== null) return Number(wordNumber);
 
   return null;
 }
 
 function evaluateRuleBlock(block, current) {
   const text = String(block || '');
-  const ifPairs = [...text.matchAll(/(?:if|when)\s+(.+?)(?:\s*(?:->|=>|:)\s*|\s+then\s+)(.+?)(?=(?:\s*(?:if|when|otherwise|else)\b|$))/gi)];
+  const ifPairs = [...text.matchAll(/(?:if|when)\s+(.+?)(?:\s*(?:->|=>|:|,)\s*|\s+then\s+)(.+?)(?=(?:\s*(?:if|when|otherwise|else)\b|$))/gi)];
 
   for (const pair of ifPairs) {
     if (evaluateRuleCondition(pair[1], current)) {
@@ -318,7 +335,7 @@ function evaluateRuleBlock(block, current) {
     }
   }
 
-  const otherwiseMatch = text.match(/(?:otherwise|else)(?:\s*(?:->|=>|:)\s*|\s+then\s+)(.+)$/i);
+  const otherwiseMatch = text.match(/(?:otherwise|else)(?:\s*(?:->|=>|:|,)\s*|\s+then\s+)(.+)$/i);
   if (otherwiseMatch) {
     return applyRuleAction(otherwiseMatch[1], current);
   }
@@ -364,9 +381,18 @@ function applyRuleAction(action, current) {
     return { type: 'output', value: formatNumber(current) };
   }
 
-  const directOutput = lower.match(/\boutput\s+([a-z][a-z0-9_-]*)\b/);
+  const directOutput = text.match(/\boutput\s+([A-Za-z][A-Za-z0-9_-]*)\b/i);
   if (directOutput && !/\bthe\b/.test(lower)) {
-    return { type: 'output', value: directOutput[1].toUpperCase() === directOutput[1] ? directOutput[1] : directOutput[1].toUpperCase() };
+    return { type: 'output', value: directOutput[1] };
+  }
+
+  const bareToken = text.trim().replace(/[.,;:!?]+$/g, '');
+  if (bareToken && /^[A-Za-z][A-Za-z0-9_-]*$/.test(bareToken) && !/^(if|then|else|otherwise|rule|double|triple|half|halve|square|cube|add|subtract|decrease|increase|multiply|divide|output|return|even|odd)$/i.test(bareToken)) {
+    return { type: 'output', value: bareToken };
+  }
+
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    return { type: 'output', value: text };
   }
 
   if (/\bdouble\b/.test(lower)) return { type: 'value', value: current * 2 };
