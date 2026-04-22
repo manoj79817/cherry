@@ -428,6 +428,7 @@ app.get('/api/answer', (req, res) => {
     name: 'ARIA API - Team Ben10',
     version: '2.0',
     status: 'online',
+    aiConfigured: Boolean(GEMINI_API_KEY && GEMINI_API_KEY !== 'your_gemini_api_key_here' && !GEMINI_API_KEY.startsWith('your_')),
     method: 'POST',
     endpoint: '/api/answer',
     body: { query: 'What is 10 + 15?', assets: [] }
@@ -462,6 +463,7 @@ app.get('/health', (req, res) => {
     name: 'ARIA API - Team Ben10',
     version: '2.0',
     status: 'online',
+    aiConfigured: Boolean(GEMINI_API_KEY && GEMINI_API_KEY !== 'your_gemini_api_key_here' && !GEMINI_API_KEY.startsWith('your_')),
     endpoints: {
       answer: 'POST /api/answer { query, assets } → { output }',
       alt1: 'POST /v1/answer',
