@@ -1,23 +1,192 @@
 <!DOCTYPE html>
-<html>
-<head><title>My API Tester</title></head>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ARIA — AI Personal Assistant | Team Ben10</title>
+  <meta name="description" content="ARIA is your Adaptive Reasoning Intelligent Assistant. Manage tasks, set reminders, schedule meetings, get daily summaries and motivation — all powered by AI." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="index.css" />
+</head>
 <body>
-  <h1>Test My API</h1>
-  <input id="query" placeholder="Ask something..." style="width:300px"/>
-  <button onclick="askAPI()">Ask</button>
-  <p id="result"></p>
+  <!-- Ambient Background -->
+  <div class="ambient-bg">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
 
-  <script>
-    async function askAPI() {
-      const query = document.getElementById("query").value;
-      const res = await fetch("/v1/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query })
-      });
-      const data = await res.json();
-      document.getElementById("result").innerText = data.output;
-    }
-  </script>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo-container">
+          <div class="logo-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+              <path d="M14 2L26 8V20L14 26L2 20V8L14 2Z" stroke="url(#logoGrad)" stroke-width="2" fill="none"/>
+              <circle cx="14" cy="14" r="5" fill="url(#logoGrad)"/>
+              <defs>
+                <linearGradient id="logoGrad" x1="2" y1="2" x2="26" y2="26">
+                  <stop offset="0%" stop-color="#818cf8"/>
+                  <stop offset="100%" stop-color="#c084fc"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <div class="logo-text">
+            <h1>ARIA</h1>
+            <span class="logo-subtitle">Personal Assistant</span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-intent="general" id="nav-general">
+          <span class="nav-icon">💬</span>
+          <span class="nav-label">Chat</span>
+        </button>
+        <button class="nav-item" data-intent="reminder" id="nav-reminder">
+          <span class="nav-icon">🔔</span>
+          <span class="nav-label">Reminders</span>
+        </button>
+        <button class="nav-item" data-intent="schedule" id="nav-schedule">
+          <span class="nav-icon">📅</span>
+          <span class="nav-label">Schedule</span>
+        </button>
+        <button class="nav-item" data-intent="task" id="nav-task">
+          <span class="nav-icon">✅</span>
+          <span class="nav-label">Tasks</span>
+        </button>
+        <button class="nav-item" data-intent="summary" id="nav-summary">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">Daily Summary</span>
+        </button>
+        <button class="nav-item" data-intent="motivation" id="nav-motivation">
+          <span class="nav-icon">🔥</span>
+          <span class="nav-label">Motivation</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="insights-card" id="insights-card">
+          <h3 class="insights-title">📈 Quick Insights</h3>
+          <div class="insight-row">
+            <span class="insight-label">Streak</span>
+            <span class="insight-value" id="insight-streak">—</span>
+          </div>
+          <div class="insight-row">
+            <span class="insight-label">Productivity</span>
+            <span class="insight-value" id="insight-productivity">—</span>
+          </div>
+          <div class="insight-row">
+            <span class="insight-label">Tasks this week</span>
+            <span class="insight-value" id="insight-tasks">—</span>
+          </div>
+        </div>
+        <div class="team-badge">
+          <span>Team Ben10</span>
+          <span class="version-badge">v2.0</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="top-bar">
+        <button class="menu-toggle" id="menu-toggle" aria-label="Toggle Menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="top-bar-center">
+          <span class="greeting-text" id="greeting-text"></span>
+        </div>
+        <div class="top-bar-right">
+          <div class="status-indicator" id="status-indicator">
+            <span class="status-dot online"></span>
+            <span class="status-text">Online</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Chat Area -->
+      <div class="chat-area" id="chat-area">
+        <!-- Welcome Screen -->
+        <div class="welcome-screen" id="welcome-screen">
+          <div class="welcome-icon">
+            <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
+              <path d="M40 5L75 22.5V57.5L40 75L5 57.5V22.5L40 5Z" stroke="url(#welcomeGrad)" stroke-width="2.5" fill="none" opacity="0.6"/>
+              <path d="M40 15L65 27.5V52.5L40 65L15 52.5V27.5L40 15Z" stroke="url(#welcomeGrad)" stroke-width="2" fill="none" opacity="0.4"/>
+              <circle cx="40" cy="40" r="12" fill="url(#welcomeGrad)" opacity="0.8"/>
+              <circle cx="40" cy="40" r="6" fill="white" opacity="0.9"/>
+              <defs>
+                <linearGradient id="welcomeGrad" x1="5" y1="5" x2="75" y2="75">
+                  <stop offset="0%" stop-color="#818cf8"/>
+                  <stop offset="50%" stop-color="#a78bfa"/>
+                  <stop offset="100%" stop-color="#c084fc"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <h2 class="welcome-title">Hello, I'm <span class="gradient-text">ARIA</span></h2>
+          <p class="welcome-subtitle">Your Adaptive Reasoning Intelligent Assistant</p>
+          <div class="quick-actions" id="quick-actions">
+            <button class="quick-action-btn" data-message="Remind me to submit the hackathon project by 11 PM tonight, it's very urgent!">
+              <span class="qa-icon">🔔</span>
+              <span class="qa-text">Set a reminder</span>
+            </button>
+            <button class="quick-action-btn" data-message="Schedule a team sync meeting tomorrow at 3 PM for 45 minutes with the development team">
+              <span class="qa-icon">📅</span>
+              <span class="qa-text">Schedule a meeting</span>
+            </button>
+            <button class="quick-action-btn" data-message="Add a task: Complete the frontend UI for the personal assistant project, it's high priority">
+              <span class="qa-icon">✅</span>
+              <span class="qa-text">Create a task</span>
+            </button>
+            <button class="quick-action-btn" data-message="Give me my daily summary and plan for today">
+              <span class="qa-icon">📊</span>
+              <span class="qa-text">Daily summary</span>
+            </button>
+            <button class="quick-action-btn" data-message="I need some motivation to keep pushing through this hackathon">
+              <span class="qa-icon">🔥</span>
+              <span class="qa-text">Get motivated</span>
+            </button>
+            <button class="quick-action-btn" data-message="What can you help me with?">
+              <span class="qa-icon">💡</span>
+              <span class="qa-text">What can you do?</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Messages Container -->
+        <div class="messages-container" id="messages-container"></div>
+      </div>
+
+      <!-- Input Area -->
+      <div class="input-area">
+        <div class="input-wrapper" id="input-wrapper">
+          <textarea
+            id="message-input"
+            class="message-input"
+            placeholder="Ask ARIA anything..."
+            rows="1"
+            aria-label="Message input"
+          ></textarea>
+          <button class="send-btn" id="send-btn" aria-label="Send message">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M3 10L17 3L10 17L9 11L3 10Z" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+        <p class="input-hint">Press <kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="app.js"></script>
 </body>
 </html>

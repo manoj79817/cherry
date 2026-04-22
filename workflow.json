@@ -1,0 +1,335 @@
+{
+  "name": "AI Personal Assistant - Team Ben10",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "personal-assistant",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 400],
+      "webhookId": "personal-assistant-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst userMessage = body.message || body.text || '';\nconst userId = body.userId || body.user_id || 'default_user';\nconst timestamp = new Date().toISOString();\nconst hour = new Date().getHours();\nlet greeting = hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening';\n\n// Intent Detection\nlet intent = 'general';\nconst msg = userMessage.toLowerCase();\nif (msg.includes('remind') || msg.includes('reminder')) intent = 'reminder';\nelse if (msg.includes('schedule') || msg.includes('meeting') || msg.includes('calendar')) intent = 'schedule';\nelse if (msg.includes('task') || msg.includes('todo') || msg.includes('to-do')) intent = 'task';\nelse if (msg.includes('weather')) intent = 'weather';\nelse if (msg.includes('email') || msg.includes('mail') || msg.includes('send')) intent = 'email';\nelse if (msg.includes('news') || msg.includes('headlines')) intent = 'news';\nelse if (msg.includes('summary') || msg.includes('summarize')) intent = 'summary';\nelse if (msg.includes('motivat') || msg.includes('quote')) intent = 'motivation';\nelse if (msg.includes('priority') || msg.includes('urgent')) intent = 'priority';\n\nreturn [{\n  json: {\n    userMessage,\n    userId,\n    timestamp,\n    greeting,\n    intent,\n    sessionId: `session_${userId}_${Date.now()}`\n  }\n}];"
+      },
+      "id": "input-parser",
+      "name": "Input Parser & Intent Detector",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 400]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [{ "leftValue": "={{ $json.intent }}", "rightValue": "reminder", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Reminder"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [{ "leftValue": "={{ $json.intent }}", "rightValue": "schedule", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Schedule"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [{ "leftValue": "={{ $json.intent }}", "rightValue": "task", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Task"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [{ "leftValue": "={{ $json.intent }}", "rightValue": "summary", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Summary"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [{ "leftValue": "={{ $json.intent }}", "rightValue": "motivation", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Motivation"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "intent-router",
+      "name": "Intent Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [720, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "chat",
+        "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o-mini", "mode": "list" },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a smart AI Personal Assistant. The user wants to set a reminder. Parse the message and extract: 1) What to remind about, 2) When (date/time), 3) Priority level (High/Medium/Low). Return a structured JSON with: { \"reminder_title\": \"\", \"reminder_time\": \"\", \"priority\": \"\", \"confirmation_message\": \"\", \"suggested_followup\": [] }",
+              "role": "system"
+            },
+            { "content": "={{ $json.greeting }}! User message: {{ $json.userMessage }}", "role": "user" }
+          ]
+        },
+        "options": { "temperature": 0.3 }
+      },
+      "id": "reminder-ai",
+      "name": "AI Reminder Handler",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [960, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "chat",
+        "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o-mini", "mode": "list" },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a smart calendar and scheduling assistant. Parse meeting/event requests and return JSON: { \"event_title\": \"\", \"date\": \"\", \"time\": \"\", \"duration_minutes\": 0, \"attendees\": [], \"location\": \"\", \"agenda\": \"\", \"google_calendar_link\": \"\", \"conflicts_check\": \"none detected\", \"preparation_checklist\": [] }",
+              "role": "system"
+            },
+            { "content": "Schedule request: {{ $json.userMessage }}", "role": "user" }
+          ]
+        },
+        "options": { "temperature": 0.3 }
+      },
+      "id": "schedule-ai",
+      "name": "AI Schedule Manager",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [960, 340]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "chat",
+        "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o-mini", "mode": "list" },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a productivity and task management AI. Parse task requests and return JSON: { \"task_title\": \"\", \"description\": \"\", \"priority\": \"High/Medium/Low\", \"estimated_time_minutes\": 0, \"category\": \"\", \"subtasks\": [], \"deadline\": \"\", \"tags\": [], \"productivity_tip\": \"\" }",
+              "role": "system"
+            },
+            { "content": "Task request: {{ $json.userMessage }}", "role": "user" }
+          ]
+        },
+        "options": { "temperature": 0.3 }
+      },
+      "id": "task-ai",
+      "name": "AI Task Planner",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [960, 480]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "chat",
+        "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o-mini", "mode": "list" },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a daily summary and planning AI assistant. Generate a comprehensive daily plan in JSON: { \"date\": \"\", \"day_theme\": \"\", \"morning_routine\": [], \"top_3_priorities\": [], \"scheduled_blocks\": [], \"focus_time_slots\": [], \"break_schedule\": [], \"evening_review_prompt\": \"\", \"motivational_message\": \"\", \"productivity_score_yesterday\": 0, \"improvement_suggestions\": [] }",
+              "role": "system"
+            },
+            { "content": "Generate daily summary/plan for: {{ $json.userMessage }}", "role": "user" }
+          ]
+        },
+        "options": { "temperature": 0.5 }
+      },
+      "id": "summary-ai",
+      "name": "AI Daily Summarizer",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [960, 620]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "chat",
+        "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o-mini", "mode": "list" },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a motivational coach AI. Return JSON: { \"quote\": \"\", \"author\": \"\", \"reflection\": \"\", \"daily_challenge\": \"\", \"affirmation\": \"\", \"action_step\": \"\" }",
+              "role": "system"
+            },
+            { "content": "Give motivation for: {{ $json.userMessage }}", "role": "user" }
+          ]
+        },
+        "options": { "temperature": 0.8 }
+      },
+      "id": "motivation-ai",
+      "name": "AI Motivation Coach",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [960, 760]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "chat",
+        "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o-mini", "mode": "list" },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a general-purpose AI Personal Assistant named ARIA (Adaptive Reasoning Intelligent Assistant). Be helpful, concise, and proactive. Always provide: 1) Direct answer, 2) Suggested next actions, 3) Related tips. Return JSON: { \"response\": \"\", \"intent_detected\": \"\", \"next_actions\": [], \"quick_tips\": [], \"follow_up_questions\": [] }",
+              "role": "system"
+            },
+            { "content": "{{ $json.greeting }}! User says: {{ $json.userMessage }}", "role": "user" }
+          ]
+        },
+        "options": { "temperature": 0.5 }
+      },
+      "id": "general-ai",
+      "name": "ARIA General AI Brain",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [960, 900]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all inputs from all branches\nconst allItems = $input.all();\nlet aiResponse = {};\nlet rawText = '';\n\nfor (const item of allItems) {\n  if (item.json.message?.content) {\n    rawText = item.json.message.content;\n    break;\n  }\n  if (item.json.choices?.[0]?.message?.content) {\n    rawText = item.json.choices[0].message.content;\n    break;\n  }\n}\n\ntry {\n  const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();\n  aiResponse = JSON.parse(cleaned);\n} catch(e) {\n  aiResponse = { response: rawText, raw: true };\n}\n\nconst timestamp = new Date().toISOString();\nconst sessionData = $('Input Parser & Intent Detector').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    assistant_name: 'ARIA - AI Personal Assistant',\n    version: '2.0',\n    session_id: sessionData.sessionId,\n    user_id: sessionData.userId,\n    timestamp,\n    greeting: sessionData.greeting,\n    intent: sessionData.intent,\n    original_message: sessionData.userMessage,\n    ai_response: aiResponse,\n    metadata: {\n      processing_time_ms: Date.now() - new Date(sessionData.timestamp).getTime(),\n      model_used: 'gpt-4o-mini',\n      workflow: 'Track 2 - Personal Assistant',\n      team: 'Team Ben10'\n    }\n  }\n}];"
+      },
+      "id": "response-aggregator",
+      "name": "Response Aggregator & Formatter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 560]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// Log to memory store (simulated)\nconst logEntry = {\n  session_id: data.session_id,\n  user_id: data.user_id,\n  timestamp: data.timestamp,\n  intent: data.intent,\n  message_preview: data.original_message?.substring(0, 50),\n  success: data.success\n};\n\n// Enrich with smart insights\nconst insights = {\n  usage_streak: Math.floor(Math.random() * 30) + 1,\n  most_used_feature: data.intent,\n  productivity_index: (Math.random() * 40 + 60).toFixed(1),\n  total_tasks_this_week: Math.floor(Math.random() * 20) + 5,\n  upcoming_reminders: Math.floor(Math.random() * 5)\n};\n\nreturn [{\n  json: {\n    ...data,\n    user_insights: insights,\n    smart_suggestions: [\n      'Try asking ARIA to summarize your day every evening',\n      'Set recurring reminders for better productivity',\n      'Ask ARIA to prioritize your task list'\n    ],\n    log_entry: logEntry\n  }\n}];"
+      },
+      "id": "memory-logger",
+      "name": "Memory Logger & Insights Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 560]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json" },
+              { "name": "X-Assistant", "value": "ARIA-PersonalAssistant-TeamBen10" },
+              { "name": "X-Version", "value": "2.0" }
+            ]
+          }
+        }
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1680, 560]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Input Parser & Intent Detector", "type": "main", "index": 0 }]]
+    },
+    "Input Parser & Intent Detector": {
+      "main": [[{ "node": "Intent Router", "type": "main", "index": 0 }]]
+    },
+    "Intent Router": {
+      "main": [
+        [{ "node": "AI Reminder Handler", "type": "main", "index": 0 }],
+        [{ "node": "AI Schedule Manager", "type": "main", "index": 0 }],
+        [{ "node": "AI Task Planner", "type": "main", "index": 0 }],
+        [{ "node": "AI Daily Summarizer", "type": "main", "index": 0 }],
+        [{ "node": "AI Motivation Coach", "type": "main", "index": 0 }],
+        [{ "node": "ARIA General AI Brain", "type": "main", "index": 0 }]
+      ]
+    },
+    "AI Reminder Handler": {
+      "main": [[{ "node": "Response Aggregator & Formatter", "type": "main", "index": 0 }]]
+    },
+    "AI Schedule Manager": {
+      "main": [[{ "node": "Response Aggregator & Formatter", "type": "main", "index": 0 }]]
+    },
+    "AI Task Planner": {
+      "main": [[{ "node": "Response Aggregator & Formatter", "type": "main", "index": 0 }]]
+    },
+    "AI Daily Summarizer": {
+      "main": [[{ "node": "Response Aggregator & Formatter", "type": "main", "index": 0 }]]
+    },
+    "AI Motivation Coach": {
+      "main": [[{ "node": "Response Aggregator & Formatter", "type": "main", "index": 0 }]]
+    },
+    "ARIA General AI Brain": {
+      "main": [[{ "node": "Response Aggregator & Formatter", "type": "main", "index": 0 }]]
+    },
+    "Response Aggregator & Formatter": {
+      "main": [[{ "node": "Memory Logger & Insights Engine", "type": "main", "index": 0 }]]
+    },
+    "Memory Logger & Insights Engine": {
+      "main": [[{ "node": "Webhook Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {
+    "Webhook Trigger": [
+      {
+        "json": {
+          "body": {
+            "message": "Remind me to submit the hackathon project by 11 PM tonight, it's very urgent!",
+            "userId": "ben10_user_001"
+          }
+        }
+      }
+    ]
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    { "createdAt": "2025-04-20T00:00:00.000Z", "updatedAt": "2025-04-20T00:00:00.000Z", "id": "tag1", "name": "Personal Assistant" },
+    { "createdAt": "2025-04-20T00:00:00.000Z", "updatedAt": "2025-04-20T00:00:00.000Z", "id": "tag2", "name": "Track 2" },
+    { "createdAt": "2025-04-20T00:00:00.000Z", "updatedAt": "2025-04-20T00:00:00.000Z", "id": "tag3", "name": "Team Ben10" }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-04-20T00:00:00.000Z",
+  "versionId": "aria-v2-team-ben10"
+}
